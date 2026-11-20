@@ -6,7 +6,11 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <algorithm>
 #include <chrono>
+#include <mutex>
+#include <string>
+#include <vector>
 #include <cstdint>
 #include <cstdio>
 
@@ -52,7 +56,120 @@ AddressSpace::AddressSpace(std::size_t code_cache_size)
     });
 }
 
+#ifdef __SWITCH__
+namespace {
+// The address spaces alive, for eden_horizon_jit_save_caches: nothing guarantees that the
+// emulator destroys its cores before the process ends.
+std::mutex live_mutex;
+std::vector<AddressSpace*> live_spaces;
+} // namespace
+
+AddressSpace::~AddressSpace() {
+    std::scoped_lock lock{live_mutex};
+    std::erase(live_spaces, this);
+}
+
+namespace {
+bool HeapIsRunningLow();
+
+std::string WarmListPath(int slot) {
+    return std::string{eden_horizon_jit_cache_prefix} + "_core" + std::to_string(slot) + ".bin";
+}
+} // namespace
+
+void AddressSpace::LoadWarmList(int slot) {
+    warm_slot = slot;
+    {
+        std::scoped_lock lock{live_mutex};
+        live_spaces.push_back(this);
+    }
+    if (eden_horizon_jit_cache_prefix[0] == 0) {
+        return;
+    }
+    std::FILE* const file = std::fopen(WarmListPath(slot).c_str(), "rb");
+    if (file == nullptr) {
+        return;
+    }
+    std::fseek(file, 0, SEEK_END);
+    const long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+    // A cache holds a few hundred thousand blocks at most; anything bigger is not a list.
+    if (size > 0 && size <= 16 * 1024 * 1024) {
+        warm_list.resize(static_cast<std::size_t>(size) / sizeof(u64));
+        if (std::fread(warm_list.data(), sizeof(u64), warm_list.size(), file) != warm_list.size()) {
+            warm_list.clear();
+        }
+    }
+    std::fclose(file);
+}
+
+std::size_t AddressSpace::SaveWarmList() const {
+    // A session that compiled next to nothing must not replace a good list.
+    constexpr std::size_t MinBlocksToSave = 4096;
+    if (warm_slot < 0 || eden_horizon_jit_cache_prefix[0] == 0 ||
+        block_entries.size() < MinBlocksToSave) {
+        return 0;
+    }
+    std::vector<u64> list;
+    list.reserve(block_entries.size());
+    for (const auto& [descriptor, entry_point] : block_entries) {
+        list.push_back(descriptor.Value());
+    }
+    // In address order, so that warming up reads guest code and fills the cache in order.
+    std::ranges::sort(list);
+    std::FILE* const file = std::fopen(WarmListPath(warm_slot).c_str(), "wb");
+    if (file == nullptr) {
+        return 0;
+    }
+    const std::size_t written = std::fwrite(list.data(), sizeof(u64), list.size(), file);
+    std::fclose(file);
+    return written;
+}
+
+void AddressSpace::CompileWarmList() {
+    const std::vector<u64> list = std::move(warm_list);
+    warm_list.clear();
+    if (list.empty()) {
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    // Leave room for what this session adds, so that warming up never ends in a clear.
+    const std::size_t min_space = code_cache_size / 5;
+    // One publication per batch: see HorizonCodeBlock::unprotect.
+    constexpr std::size_t BatchSize = 512;
+    std::size_t compiled = 0;
+    mem.unprotect();
+    for (const u64 value : list) {
+        const IR::LocationDescriptor descriptor{value};
+        if (GetRemainingSize() < min_space || HeapIsRunningLow()) {
+            break;
+        }
+        if (Get(descriptor) || !IsCodeReadable(descriptor)) {
+            continue;
+        }
+        GenerateIR(ir_block, descriptor);
+        try {
+            Emit(std::move(ir_block));
+        } catch (const CodeBufferExhausted&) {
+            break;
+        }
+        if (++compiled % BatchSize == 0) {
+            mem.protect();
+            mem.unprotect();
+        }
+    }
+    mem.protect();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    __atomic_fetch_add(&eden_horizon_jit_warm_blocks, compiled, __ATOMIC_RELAXED);
+    __atomic_fetch_add(
+        &eden_horizon_jit_warm_micros,
+        static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()),
+        __ATOMIC_RELAXED);
+}
+#else
 AddressSpace::~AddressSpace() = default;
+#endif
 
 CodePtr AddressSpace::Get(IR::LocationDescriptor descriptor) {
     if (const auto iter = block_entries.find(descriptor); iter != block_entries.end()) {
@@ -139,6 +256,12 @@ CodePtr AddressSpace::GetOrEmit(IR::LocationDescriptor descriptor) {
         return block_entry;
     }
 #ifdef __SWITCH__
+    if (!warm_list.empty()) {
+        CompileWarmList();
+        if (CodePtr block_entry = Get(descriptor)) {
+            return block_entry;
+        }
+    }
     const CompileTimer timer;
     // Checked here and not in Emit(), which the loop below calls with a block it must keep.
     constexpr std::size_t MinBlocksToDrop = 16384;
@@ -169,7 +292,7 @@ CodePtr AddressSpace::GetOrEmit(IR::LocationDescriptor descriptor) {
         entry_point = Emit(std::move(ir_block)).entry_point;
     }
 #ifdef __SWITCH__
-    constexpr std::size_t MaxBlocksAhead = 8;
+    const std::size_t MaxBlocksAhead = static_cast<std::size_t>(eden_horizon_jit_blocks_ahead);
     // Emit() clears the cache when it runs low, which would drop the block just made.
     constexpr std::size_t MinSpaceAhead = 2 * 1024 * 1024;
     std::size_t emitted_ahead = 0;
@@ -480,3 +603,15 @@ fail:
 }
 
 }  // namespace Dynarmic::Backend::Arm64
+
+#ifdef __SWITCH__
+extern "C" unsigned long long eden_horizon_jit_save_caches(void) {
+    using namespace Dynarmic::Backend::Arm64;
+    std::scoped_lock lock{live_mutex};
+    unsigned long long written = 0;
+    for (const AddressSpace* space : live_spaces) {
+        written += space->SaveWarmList();
+    }
+    return written;
+}
+#endif

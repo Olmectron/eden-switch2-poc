@@ -27,15 +27,15 @@ inestable, aunque ya mejoró bastante. No reportes fallos de este port al proyec
 | Game | Result |
 |---|---|
 | Luigi's Mansion 2 HD | Playable: correct picture, audio, controls, gyro, rumble, saves |
-| The Legend of Zelda: Echoes of Wisdom | Playable at about 30 fps with *Address space* set to `compact`; stutters while new code is compiled, rifts are not drawn, and loading a save sometimes hangs |
-| Super Mario 3D World + Bowser's Fury | Boots and plays; only tested for a few minutes |
-| Mario Strikers: Battle League | Black screen after the loading icon |
+| The Legend of Zelda: Echoes of Wisdom | Playable at 30 fps and above; stutters when entering new areas, rifts are only drawn from the raised camera, and loading a save sometimes hangs |
+| Super Mario 3D World + Bowser's Fury | Plays near 60 fps with occasional drops; only tested for a few minutes |
+| Mario Strikers: Battle League | Does not work: aborts at start with *Address space* `compact`, black screen after the loading icon with `game` |
 
 Nothing else has been tested.
 
 What works: the dynarmic JIT (through kaiHEN's JIT memory), Vulkan rendering on NVK,
-audio output, one controller with motion and rumble, saves, the disk shader cache, a file
-picker for the SD card and a small options screen.
+audio output, one controller with motion and rumble, saves, the disk shader cache, a disk
+cache of compiled CPU code, a file picker for the SD card and a small options screen.
 
 Known limits:
 
@@ -43,7 +43,8 @@ Known limits:
   memory access goes through the page table.
 - Memory is tight. The emulator, the guest's 4 GiB and the GPU share one heap of about
   9 GiB, and long sessions can still run out.
-- New guest code stutters while it is compiled, most of all in handheld mode.
+- New guest code stutters while it is compiled. The CPU code cache removes most of it from
+  the second session of a game on, at the cost of a longer start.
 - No touch screen, no network, one player, and no way back to the game list without
   leaving the emulator.
 

@@ -21,6 +21,9 @@ public:
     explicit A64AddressSpace(const A64::UserConfig& conf);
 
     void GenerateIR(IR::Block& ir_block, IR::LocationDescriptor) const override;
+#ifdef __SWITCH__
+    bool IsCodeReadable(IR::LocationDescriptor) const override;
+#endif
 
     void InvalidateCacheRanges(const boost::icl::interval_set<u64>& ranges);
 

@@ -578,6 +578,22 @@ TransformBufferCopies(std::span<const VideoCommon::BufferCopy> copies, size_t bu
     }
 }
 
+/// For a texture stored with its four components in the opposite order.
+[[nodiscard]] SwizzleSource SwapReversed(SwizzleSource value) {
+    switch (value) {
+    case SwizzleSource::R:
+        return SwizzleSource::A;
+    case SwizzleSource::G:
+        return SwizzleSource::B;
+    case SwizzleSource::B:
+        return SwizzleSource::G;
+    case SwizzleSource::A:
+        return SwizzleSource::R;
+    default:
+        return value;
+    }
+}
+
 [[nodiscard]] SwizzleSource SwapSpecial(SwizzleSource value) {
     switch (value) {
     case SwizzleSource::A:
@@ -740,6 +756,23 @@ void CopyBufferToImage(vk::CommandBuffer cmdbuf, VkBuffer src_buffer, VkImage im
     };
 }
 
+/// Whether A4B4G4R4 textures are held in the reversed R4G4B4A4. Vulkan 1.3 drivers can
+/// have the format without listing VK_EXT_4444_formats, so ask for the format itself.
+bool NeedsReversed4444(const Device& device, PixelFormat format) {
+    if (format != PixelFormat::A4B4G4R4_UNORM) {
+        return false;
+    }
+    const bool reversed =
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, format).format !=
+        VK_FORMAT_A4B4G4R4_UNORM_PACK16;
+    static bool logged = false;
+    if (!std::exchange(logged, true)) {
+        LOG_INFO(Render_Vulkan, "A4B4G4R4 textures in use, stored {}",
+                 reversed ? "reversed as R4G4B4A4" : "natively");
+    }
+    return reversed;
+}
+
 void TryTransformSwizzleIfNeeded(PixelFormat format, std::array<SwizzleSource, 4>& swizzle,
                                  bool emulate_bgr565, bool emulate_a4b4g4r4) {
     switch (format) {
@@ -759,7 +792,7 @@ void TryTransformSwizzleIfNeeded(PixelFormat format, std::array<SwizzleSource, 4
         break;
     case PixelFormat::A4B4G4R4_UNORM:
         if (emulate_a4b4g4r4) {
-            std::ranges::reverse(swizzle);
+            std::ranges::transform(swizzle, swizzle.begin(), SwapReversed);
         }
         break;
     default:
@@ -2587,13 +2620,21 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
         swizzle = info.Swizzle();
         TryTransformSwizzleIfNeeded(format, swizzle,
                         device->MustEmulateBGR565(),
-                        !device->IsExt4444FormatsSupported());
+                        NeedsReversed4444(*device, format));
         if ((aspect_mask & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) != 0) {
             std::ranges::transform(swizzle, swizzle.begin(), ConvertGreenRed);
             SanitizeDepthStencilSwizzle(swizzle, device->SupportsDepthStencilSwizzleOne());
         }
     }
     auto format_info = MaxwellToVK::SurfaceFormat(*device, FormatType::Optimal, true, format);
+#ifdef __SWITCH__
+    // Bring-up aid: which guest formats a game samples, and what the driver holds them in.
+    static std::array<bool, VideoCore::Surface::MaxPixelFormat> seen{};
+    if (!std::exchange(seen[static_cast<std::size_t>(format)], true)) {
+        LOG_INFO(Render_Vulkan, "Texture format {} held as VkFormat {}", format,
+                 static_cast<int>(format_info.format));
+    }
+#endif
     if (device->ApiVersion() >= VK_API_VERSION_1_3) {
         const VkFormatProperties3 properties3 =
             device->GetPhysical().GetFormatProperties3(format_info.format);

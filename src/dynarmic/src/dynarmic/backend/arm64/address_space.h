@@ -48,7 +48,21 @@ public:
     void InvalidateBasicBlocks(const ::Common::unordered_set<IR::LocationDescriptor>& descriptors);
 
     void ClearCache();
+#ifdef __SWITCH__
+    /// Writes the JIT cache list of this core. Returns the blocks written.
+    std::size_t SaveWarmList() const;
+#endif
 protected:
+#ifdef __SWITCH__
+    /// JIT cache (common/horizon/stats.h). `slot` tells this core's list from the others'.
+    void LoadWarmList(int slot);
+    void CompileWarmList();
+    /// Whether guest code can be read at the block's address right now.
+    virtual bool IsCodeReadable(IR::LocationDescriptor) const { return true; }
+
+    int warm_slot = -1;
+    std::vector<u64> warm_list;
+#endif
     virtual EmitConfig GetEmitConfig() = 0;
     virtual void RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& block_info) = 0;
 

@@ -12,7 +12,9 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <cstdio>
 #include <fstream>
+#include <sys/stat.h>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -116,22 +118,22 @@ std::vector<Platform::MenuOption> DefaultOptions() {
          {"0.5", "0.75", "1", "1.5", "2"}, 2},
         {"console", "Console mode",
          "What the game is told. Most games render 1080p docked and 720p handheld.",
-         {"docked", "handheld"}, 0},
+         {"docked", "handheld"}, 1},
         {"show_fps", "Show FPS and speed",
          "Game frames per second and emulation speed, in the top left corner.",
          {"on", "off"}, 0},
         {"show_mode", "Show mode and resolution",
          "Console mode and internal resolution, under the FPS.",
          {"on", "off"}, 0},
-        {"address_space", "Address space (experimental)",
-         "compact gives the game a smaller address space and frees about 900 MiB. Some games may not start.",
-         {"game", "compact"}, 0},
-        {"dynamic_state", "Dynamic state (diagnostic)",
-         "off makes the GPU driver take all pipeline state up front. Try it if something is not drawn.",
+        {"address_space", "Address space",
+         "compact gives 39-bit games a smaller address space and frees about 900 MiB. Use game if one does not start.",
+         {"compact", "game"}, 0},
+        {"cpu_boost", "CPU boost",
+         "Asks the console for its loading-screen CPU clock. Faster, at the cost of battery and heat.",
+         {"off", "on"}, 1},
+        {"jit_cache", "CPU code cache on disk",
+         "Remembers the game code compiled in a session and compiles it at once on the next start, so it stutters less.",
          {"on", "off"}, 0},
-        {"cpu_boost", "CPU boost (experimental)",
-         "Asks the console for its loading-screen CPU clock. It may slow the GPU down instead.",
-         {"off", "on"}, 0},
         {"profiler", "Profiler (diagnostic)",
          "Logs every 10 seconds where each emulator thread spends its time. Slows the game.",
          {"off", "on"}, 0},
@@ -210,9 +212,6 @@ void ApplyOptions(const std::vector<Platform::MenuOption>& options) {
                                                           : Settings::ConsoleMode::Docked);
         } else if (option.key == "address_space") {
             eden_horizon_compact_address_space = choice == "compact" ? 1 : 0;
-        } else if (option.key == "dynamic_state" && choice == "off") {
-            Settings::values.dyna_state.SetValue(Settings::ExtendedDynamicState::Disabled);
-            Settings::values.vertex_input_dynamic_state.SetValue(false);
         } else if (option.key == "cpu_boost" && choice == "on") {
             LOG_INFO(Frontend, "CPU boost requested, result {:#x}", Platform::SetCpuBoost(true));
         } else if (option.key == "shader_cache") {
@@ -356,10 +355,11 @@ public:
                  (compile - last_compile) / 1000);
         LOG_INFO(Frontend,
                  "Memory detail: textures {} MiB, buffers {} MiB, JIT blocks {}, cache clears {} ({} "
-                 "for heap)",
+                 "for heap), warmed {} blocks in {} ms",
                  eden_horizon_texture_bytes >> 20, eden_horizon_buffer_bytes >> 20,
                  eden_horizon_jit_blocks, eden_horizon_jit_cache_clears,
-                 eden_horizon_jit_heap_clears);
+                 eden_horizon_jit_heap_clears, eden_horizon_jit_warm_blocks,
+                 eden_horizon_jit_warm_micros / 1000);
         last_count = count;
         last_bytes = bytes;
         last_micros = micros;
@@ -462,6 +462,25 @@ int main(int argc, char** argv) {
         return 0;
     }
     LOG_INFO(Frontend, "Booting {}", game_path);
+    if (OptionIs(options, "jit_cache", "on")) {
+        // Named after the game file: the cores' JITs are made before the title is known.
+        std::string name = game_path.substr(game_path.find_last_of('/') + 1);
+        name = name.substr(0, name.find_last_of('.'));
+        std::erase_if(name, [](unsigned char c) { return std::isalnum(c) == 0 && c != '_'; });
+        mkdir("sdmc:/switch/eden/jit", 0777);
+        std::snprintf(eden_horizon_jit_cache_prefix, sizeof(eden_horizon_jit_cache_prefix),
+                      "sdmc:/switch/eden/jit/%.60s_%s", name.c_str(),
+                      OptionValue(options, "address_space").c_str());
+    }
+    // Tuning aid: a number in this file replaces how far the JIT compiles ahead.
+    if (std::ifstream ahead{"sdmc:/switch/eden/jit_ahead.txt"}; ahead) {
+        int blocks = 0;
+        if (ahead >> blocks && blocks >= 0 && blocks <= 64) {
+            eden_horizon_jit_blocks_ahead = blocks;
+        }
+    }
+    LOG_INFO(Frontend, "JIT cache '{}', {} blocks ahead", eden_horizon_jit_cache_prefix,
+             eden_horizon_jit_blocks_ahead);
     LogStage("create system");
 
     auto system = std::make_unique<Core::System>();
@@ -552,6 +571,7 @@ int main(int argc, char** argv) {
     LogStage("shut down");
     Platform::SetCpuBoost(false);
     system->Pause();
+    LOG_INFO(Frontend, "JIT cache: saved {} blocks", eden_horizon_jit_save_caches());
     system->ShutdownMainProcess();
     // The emulated controllers hold callbacks into the input engines: release them first.
     system->HIDCore().UnloadInputDevices();

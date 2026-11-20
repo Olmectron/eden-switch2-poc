@@ -253,6 +253,13 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
     // of stutter: use the larger size when the compact address space leaves room for it.
     config.code_cache_size =
         std::uint32_t(eden_horizon_compact_address_space != 0 ? 64_MiB : 32_MiB);
+    // With last session's lists the caches follow what each core needed: the busiest core
+    // outgrows 64 MiB while another may sit idle.
+    if (const unsigned megabytes = eden_horizon_jit_cache_megabytes(int(m_core_index));
+        megabytes != 0 && eden_horizon_compact_address_space != 0) {
+        config.code_cache_size = megabytes * std::uint32_t(1_MiB);
+    }
+    LOG_INFO(Core_ARM, "Core {} code cache: {} MiB", m_core_index, config.code_cache_size >> 20);
 #elif defined(ARCHITECTURE_arm64) || defined(__sun__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__OpenBSD__)
     config.code_cache_size = std::uint32_t(128_MiB);
 #else

@@ -5,7 +5,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <cstdio>
+
 #include <pwd.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -99,6 +102,38 @@ unsigned long long eden_horizon_jit_cache_clears = 0;
 unsigned long long eden_horizon_jit_heap_clears = 0;
 unsigned long long eden_horizon_jit_compile_micros = 0;
 int eden_horizon_compact_address_space = 0;
+int eden_horizon_jit_blocks_ahead = 8;
+char eden_horizon_jit_cache_prefix[160] = "";
+unsigned long long eden_horizon_jit_warm_blocks = 0;
+unsigned long long eden_horizon_jit_warm_micros = 0;
+
+unsigned eden_horizon_jit_cache_megabytes(int core) {
+    if (eden_horizon_jit_cache_prefix[0] == 0) {
+        return 0;
+    }
+    constexpr int Cores = 4;
+    unsigned long long blocks[Cores]{};
+    bool any = false;
+    for (int i = 0; i < Cores; ++i) {
+        char path[200];
+        std::snprintf(path, sizeof(path), "%s_core%d.bin", eden_horizon_jit_cache_prefix, i);
+        struct stat info;
+        if (stat(path, &info) == 0) {
+            blocks[i] = static_cast<unsigned long long>(info.st_size) / 8;
+            any = true;
+        }
+    }
+    if (!any || core < 0 || core >= Cores) {
+        return 0;
+    }
+    // A block took about 290 bytes of cache in the sessions measured; half as much again
+    // leaves room for what this session adds. A core with no list did next to nothing.
+    constexpr unsigned long long BytesPerBlock = 435;
+    constexpr unsigned MinMegabytes = 24, MaxMegabytes = 112;
+    const unsigned megabytes = static_cast<unsigned>((blocks[core] * BytesPerBlock) >> 20) + 1;
+    return megabytes < MinMegabytes ? MinMegabytes
+                                    : megabytes > MaxMegabytes ? MaxMegabytes : megabytes;
+}
 
 // The emulator's named threads, for the frontend's profiler (see common/thread.cpp).
 struct eden_horizon_thread {

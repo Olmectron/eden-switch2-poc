@@ -18,4 +18,17 @@ extern unsigned long long eden_horizon_large_mmaps[64];
 extern int eden_horizon_large_mmap_count;
 /// Set by the frontend: nonzero gives 39-bit programs a 36-bit address space
 extern int eden_horizon_compact_address_space;
+/// Set by the frontend: how many blocks the JIT compiles ahead of the one it needs
+extern int eden_horizon_jit_blocks_ahead;
+/// JIT cache: the blocks each core had compiled when the last session ended are compiled
+/// again in one go when the core starts, instead of one by one as the game reaches them.
+/// The frontend sets the path prefix of the game's lists; empty turns the cache off.
+extern char eden_horizon_jit_cache_prefix[160];
+extern unsigned long long eden_horizon_jit_warm_blocks; ///< Compiled from the lists
+extern unsigned long long eden_horizon_jit_warm_micros;
+/// Writes every core's list. Call with the emulated cores stopped. Returns the blocks written.
+unsigned long long eden_horizon_jit_save_caches(void);
+/// The code cache a core should get, in MiB, going by how much it compiled last session;
+/// zero when the game has no lists yet.
+unsigned eden_horizon_jit_cache_megabytes(int core);
 }

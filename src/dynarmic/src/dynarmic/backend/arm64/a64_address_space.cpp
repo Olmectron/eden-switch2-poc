@@ -362,7 +362,16 @@ A64AddressSpace::A64AddressSpace(const A64::UserConfig& conf)
         : AddressSpace(conf.code_cache_size)
         , conf(conf) {
     EmitPrelude();
+#ifdef __SWITCH__
+    LoadWarmList(static_cast<int>(conf.processor_id));
+#endif
 }
+
+#ifdef __SWITCH__
+bool A64AddressSpace::IsCodeReadable(IR::LocationDescriptor descriptor) const {
+    return conf.callbacks->MemoryReadCode(A64::LocationDescriptor{descriptor}.PC()).has_value();
+}
+#endif
 
 void A64AddressSpace::GenerateIR(IR::Block& ir_block, IR::LocationDescriptor descriptor) const {
     ir_block.Reset(descriptor);
