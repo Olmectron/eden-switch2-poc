@@ -23,6 +23,24 @@ if (CMAKE_GENERATOR MATCHES "Ninja" AND WIN32)
 endif()
 
 include(DetectPlatform)
+
+if (HORIZON_HOST)
+    # devkitA64 on MSYS2 reports Windows paths for libstdc++'s std module, which
+    # MSYS CMake mistakes for relative ones. Eden does not use `import std`.
+    set(CMAKE_CXX_COMPILER_IMPORT_STD "")
+    set(CMAKE_CXX_STDLIB_MODULES_JSON "")
+
+    # devkitA64 tools are native Windows programs with a 32k command line limit,
+    # which libcore.a exceeds. Archive through a response file on MSYS2 hosts.
+    if (CMAKE_HOST_SYSTEM_NAME MATCHES "MSYS|MINGW")
+        foreach(_lang C CXX ASM)
+            set(CMAKE_${_lang}_ARCHIVE_CREATE
+                "sh ${CMAKE_SOURCE_DIR}/tools/switch2/ar-rsp.sh qc <TARGET> <OBJECTS>")
+        endforeach()
+    endif()
+
+endif()
+
 include(DetectArchitecture)
 include(DefaultConfig)
 include(UseLTO)
@@ -396,6 +414,23 @@ if (YUZU_USE_BUNDLED_OPENSSL)
     set(BUILD_SHARED_LIBS OFF)
     AddJsonPackage(openssl-ci)
 else()
+    if (HORIZON_HOST)
+        # No portlib exists; cross-build for bare-metal aarch64 (newlib + libnx).
+        # cpmfile.json overrides OPENSSL_CONFIGURE_OPTIONS, so the extra options
+        # ride along with the target, which openssl-cmake prepends to them.
+        set(OPENSSL_TARGET_PLATFORM linux-aarch64
+            no-apps no-docs no-dso no-engine no-module no-async no-secure-memory
+            no-afalgeng no-ui-console no-dgram no-quic
+            no-autoload-config no-thread-pool no-default-thread-pool
+            no-pinshared no-legacy -DNO_SYS_UN_H -DNO_SYSLOG
+            # armcap.c finds the CPU's features with SIGILL handlers or getauxval(); there
+            # are no signals here, so take the getauxval() path, which
+            # src/common/horizon/mman.cpp answers for the console's CPU.
+            -DOSSL_IMPLEMENT_GETAUXVAL -DAT_HWCAP=16 -DAT_SECURE=23
+            -Wno-implicit-function-declaration)
+        # build_libs also builds libapps, which needs syslog and UNIX sockets.
+        set(OPENSSL_BUILD_TARGET build_generated libcrypto.a libssl.a)
+    endif()
     AddJsonPackage(openssl)
     set(OPENSSL_BUILD_VERBOSE ON)
     set(OPENSSL_CONFIGURE_VERBOSE ON)
@@ -422,6 +457,21 @@ AddJsonPackage(boost)
 # really annoying thing where boost::headers doesn't work with cpm
 # TODO(crueter) investigate
 set(BOOST_NO_HEADERS ${Boost_ADDED})
+
+if (Boost_ADDED AND HORIZON_HOST)
+    # newlib has no mmap or rlimits. Eden only needs the header-only containers
+    # and the assembly fcontext routines, so drop the sources that need them.
+    foreach(_tgt_filter "boost_container:alloc_lib|/synchronized_pool_resource" "boost_context:stack_traits")
+        string(REPLACE ":" ";" _tf "${_tgt_filter}")
+        list(GET _tf 0 _tgt)
+        list(GET _tf 1 _re)
+        if (TARGET ${_tgt})
+            get_target_property(_srcs ${_tgt} SOURCES)
+            list(FILTER _srcs EXCLUDE REGEX "(${_re})\.(c|cpp)$")
+            set_target_properties(${_tgt} PROPERTIES SOURCES "${_srcs}")
+        endif()
+    endforeach()
+endif()
 
 if (Boost_ADDED)
     add_compile_definitions(YUZU_BOOST_v1)

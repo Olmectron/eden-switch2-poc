@@ -19,6 +19,9 @@
 
 #include "dynarmic/backend/arm64/emit_arm64.h"
 #include "dynarmic/backend/arm64/fastmem.h"
+#ifdef __SWITCH__
+#    include "dynarmic/backend/arm64/horizon_code_block.h"
+#endif
 #include "dynarmic/interface/halt_reason.h"
 #include "dynarmic/ir/basic_block.h"
 #include "dynarmic/ir/location_descriptor.h"
@@ -50,13 +53,13 @@ protected:
     virtual void RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& block_info) = 0;
 
     void ProtectCodeMemory() {
-#if defined(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT) || defined(__APPLE__) || defined(__OpenBSD__)
+#if defined(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT) || defined(__APPLE__) || defined(__OpenBSD__) || defined(__SWITCH__)
         mem.protect();
 #endif
     }
 
     void UnprotectCodeMemory() {
-#if defined(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT) || defined(__APPLE__) || defined(__OpenBSD__)
+#if defined(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT) || defined(__APPLE__) || defined(__OpenBSD__) || defined(__SWITCH__)
         mem.unprotect();
 #endif
     }
@@ -70,8 +73,18 @@ protected:
     FakeCall FastmemCallback(u64 host_pc);
 
     IR::Block ir_block;
+#ifdef __SWITCH__
+    std::size_t emits_since_heap_check = 0;
+#endif
     const std::size_t code_cache_size;
+#ifdef __SWITCH__
+    HorizonCodeBlock mem;
+    /// Where code is written; it runs at mem.ptr() once published by mem.invalidate()
+    u32* WritePtr() const { return mem.wptr(); }
+#else
     oaknut::CodeBlock mem;
+    u32* WritePtr() const { return mem.ptr(); }
+#endif
     oaknut::CodeGenerator code;
 
     // A IR::LocationDescriptor will have one current CodePtr.
@@ -79,7 +92,8 @@ protected:
     std::map<CodePtr, IR::LocationDescriptor> reverse_block_entries;
     ::Common::unordered_map<IR::LocationDescriptor, CodePtr> block_entries;
     ::Common::unordered_map<CodePtr, EmittedBlockInfo> block_infos;
-    ::Common::unordered_map<IR::LocationDescriptor, ::Common::unordered_set<CodePtr>> block_references;
+    // A block is added to each of its targets once, when it is emitted: no set is needed.
+    ::Common::unordered_map<IR::LocationDescriptor, std::vector<CodePtr>> block_references;
 
     ExceptionHandler exception_handler;
     FastmemManager fastmem_manager;

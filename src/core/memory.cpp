@@ -6,6 +6,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <span>
@@ -28,6 +30,8 @@
 #include "core/hardware_properties.h"
 #include "core/hle/kernel/k_page_table.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/physical_core.h"
 #include "core/memory.h"
 #include "video_core/gpu.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
@@ -622,8 +626,11 @@ struct Memory::Impl {
     template <typename T>
     inline T Read(Common::ProcessAddress vaddr) noexcept requires(std::is_trivially_copyable_v<T>) {
         const u64 addr = GetInteger(vaddr);
-        if (auto const ptr = GetPointerImpl(addr, [addr]() {
+        if (auto const ptr = GetPointerImpl(addr, [this, addr]() {
             LOG_ERROR(HW_Memory, "Unmapped Read{} @ {:#016x}", sizeof(T) * 8, addr);
+#ifdef __SWITCH__
+            TraceNullRead(addr);
+#endif
         }, [&]() {
             HandleRasterizerDownload(addr, sizeof(T));
         }); ptr) [[likely]] {
@@ -763,6 +770,27 @@ struct Memory::Impl {
         gpu_device_memory->ApplyOpOnPointer(p, scratch_buffers[core], [&](DAddr address) { gpu.InvalidateRegion(address, size); });
         return true;
     }
+
+#ifdef __SWITCH__
+    /// Bring-up aid: when the game starts reading through a null pointer, log where it
+    /// is, a few times per session and not more than once every two seconds.
+    void TraceNullRead(u64 addr) {
+        static std::atomic<int> remaining{8};
+        static std::atomic<s64> last_ms{-10'000};
+        if (addr >= 0x10000 || remaining.load(std::memory_order_relaxed) <= 0) {
+            return;
+        }
+        const s64 now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+        s64 last = last_ms.load(std::memory_order_relaxed);
+        if (now_ms - last < 2000 || !last_ms.compare_exchange_strong(last, now_ms)) {
+            return;
+        }
+        remaining.fetch_sub(1, std::memory_order_relaxed);
+        system.Kernel().CurrentPhysicalCore().LogBacktrace(system.Kernel());
+    }
+#endif
 
     Core::System& system;
     Tegra::MaxwellDeviceMemoryManager* gpu_device_memory{};

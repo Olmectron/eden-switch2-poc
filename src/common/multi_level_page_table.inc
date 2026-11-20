@@ -3,6 +3,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__SWITCH__)
+#include <cstdlib>
 #else
 #include <sys/mman.h>
 #endif
@@ -26,6 +28,10 @@ MultiLevelPageTable<BaseAddr>::MultiLevelPageTable(std::size_t address_space_bit
     alloc_size = (1ULL << (address_space_bits - page_bits)) * sizeof(BaseAddr);
     std::size_t first_level_size = 1ULL << first_level_bits;
     first_level_map.resize(first_level_size, nullptr);
+#if defined(__SWITCH__)
+    // No flat array: see operator[].
+    level_index_mask = (1ULL << (first_level_shift - page_bits)) - 1;
+#else
 #ifdef _WIN32
     void* base{VirtualAlloc(nullptr, alloc_size, MEM_RESERVE, PAGE_READWRITE)};
 #else
@@ -35,10 +41,16 @@ MultiLevelPageTable<BaseAddr>::MultiLevelPageTable(std::size_t address_space_bit
 #endif
     ASSERT(base);
     base_ptr = reinterpret_cast<BaseAddr*>(base);
+#endif
 }
 
 template <typename BaseAddr>
 MultiLevelPageTable<BaseAddr>::~MultiLevelPageTable() noexcept {
+#if defined(__SWITCH__)
+    for (void* level : first_level_map) {
+        std::free(level);
+    }
+#else
     if (!base_ptr) {
         return;
     }
@@ -46,6 +58,7 @@ MultiLevelPageTable<BaseAddr>::~MultiLevelPageTable() noexcept {
     ASSERT(VirtualFree(base_ptr, 0, MEM_RELEASE));
 #else
     ASSERT(munmap(base_ptr, alloc_size) == 0);
+#endif
 #endif
 }
 
@@ -60,6 +73,10 @@ void MultiLevelPageTable<BaseAddr>::ReserveRange(u64 start, std::size_t size) {
 
 template <typename BaseAddr>
 void MultiLevelPageTable<BaseAddr>::AllocateLevel(u64 index) {
+#if defined(__SWITCH__)
+    first_level_map[index] = std::calloc(1, first_level_chunk_size);
+    ASSERT(first_level_map[index]);
+#else
     void* ptr = reinterpret_cast<char *>(base_ptr) + index * first_level_chunk_size;
 #ifdef _WIN32
     void* base = VirtualAlloc(ptr, first_level_chunk_size, MEM_COMMIT, PAGE_READWRITE);
@@ -68,6 +85,7 @@ void MultiLevelPageTable<BaseAddr>::AllocateLevel(u64 index) {
     void* base = ptr;
 #endif
     first_level_map[index] = base;
+#endif
 }
 
 } // namespace Common

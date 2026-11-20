@@ -159,8 +159,14 @@ if(WIN32)
     target_link_libraries(common PRIVATE ntdll)
 endif()
 
-if(NOT WIN32)
+if(NOT WIN32 AND NOT HORIZON_HOST)
     target_sources(common PRIVATE signal_chain.cpp signal_chain.h)
+endif()
+
+if(HORIZON_HOST)
+    # POSIX shims for newlib + libnx; PUBLIC so dependents see <sys/mman.h> too.
+    target_sources(common PRIVATE horizon/mman.cpp horizon/compat/sys/mman.h)
+    target_include_directories(common SYSTEM PUBLIC horizon/compat)
 endif()
 
 if(ANDROID)
@@ -234,7 +240,11 @@ if(CXX_CLANG)
 endif()
 
 if (BOOST_NO_HEADERS)
-    target_link_libraries(common PUBLIC Boost::algorithm Boost::heap Boost::icl Boost::pool Boost::asio)
+    if (HORIZON_HOST)
+        target_link_libraries(common PUBLIC Boost::algorithm Boost::heap Boost::icl Boost::pool)
+    else()
+        target_link_libraries(common PUBLIC Boost::algorithm Boost::heap Boost::icl Boost::pool Boost::asio)
+    endif()
 else()
     target_link_libraries(common PUBLIC Boost::headers)
 endif()

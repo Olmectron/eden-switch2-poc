@@ -76,6 +76,22 @@ vk::SurfaceKHR CreateSurface(
             throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
         }
     }
+#elif defined(__SWITCH__)
+    if (window_info.type == Core::Frontend::WindowSystemType::Horizon) {
+        const VkViSurfaceCreateInfoNN vi_ci{
+            .sType = VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN,
+            .pNext = nullptr,
+            .flags = 0,
+            .window = window_info.render_surface, // NWindow*
+        };
+        const auto vkCreateViSurfaceNN = reinterpret_cast<PFN_vkCreateViSurfaceNN>(
+            dld.vkGetInstanceProcAddr(*instance, "vkCreateViSurfaceNN"));
+        if (!vkCreateViSurfaceNN ||
+            vkCreateViSurfaceNN(*instance, &vi_ci, nullptr, &unsafe_surface) != VK_SUCCESS) {
+            LOG_ERROR(Render_Vulkan, "Failed to initialize VI surface");
+            throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
+        }
+    }
 #else
     if (window_info.type == Core::Frontend::WindowSystemType::X11) {
         const VkXlibSurfaceCreateInfoKHR xlib_ci{

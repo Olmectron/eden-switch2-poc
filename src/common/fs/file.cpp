@@ -318,7 +318,7 @@ static void PlatformUnmap(IOFile& io) {
         io.mmap_fd = -1;
     }
 }
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) || defined(__SWITCH__)
 // NO IMPLEMENTATION YET
 #else
 static int PlatformMapReadOnly(IOFile& io, const wchar_t* path) {
@@ -392,6 +392,13 @@ void IOFile::Open(const fs::path& path, FileAccessMode mode, FileType type, File
     } else {
         file = std::fopen(path.c_str(), AccessModeToStr(mode, type));
     }
+#elif defined(__SWITCH__)
+    file = std::fopen(path.c_str(), AccessModeToStr(mode, type));
+    if (file != nullptr && mode == FileAccessMode::Read) {
+        // Each read that misses the stdio buffer is a call to the filesystem service;
+        // the default buffer is 1 KiB, and game data is read in many small pieces.
+        std::setvbuf(file, nullptr, _IOFBF, 128 * 1024);
+    }
 #elif defined(__HAIKU__) || defined(__managarm__) || defined(__OPENORBIS__) || defined(__APPLE__)
     file = std::fopen(path.c_str(), AccessModeToStr(mode, type));
 #elif defined(__unix__)
@@ -415,7 +422,7 @@ void IOFile::Open(const fs::path& path, FileAccessMode mode, FileType type, File
 }
 
 void IOFile::Close() {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__SWITCH__)
     // NO IMPLEMENTATION YET
 #else
     PlatformUnmap(*this);
@@ -523,6 +530,16 @@ u64 IOFile::GetSize() const {
                 return 0;
             }
         }
+#elif defined(__SWITCH__)
+        // Horizon refuses to look up by path a file that is open for writing.
+        struct stat st {};
+        if (fstat(fileno(file), &st) != 0) {
+            const auto ec = std::error_code{errno, std::generic_category()};
+            LOG_ERROR(Common_Filesystem, "Failed to retrieve the file size of path={}, ec_message={}",
+                PathToUTF8String(file_path), ec.message());
+            return 0;
+        }
+        const u64 file_size = static_cast<u64>(st.st_size);
 #else
         std::error_code ec;
         auto const file_size = fs::file_size(file_path, ec);

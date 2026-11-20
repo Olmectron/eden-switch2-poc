@@ -752,9 +752,14 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             .flags = flags,
             .physicalDevice = physical,
             .device = *logical,
+#ifdef __SWITCH__
+            // Smaller blocks leave less unused memory in each, on a host where it is scarce.
+            .preferredLargeHeapBlockSize = 32u * 1024u * 1024u,
+#else
             .preferredLargeHeapBlockSize = is_integrated
                                            ? (64u * 1024u * 1024u)
                                            : (256u * 1024u * 1024u),
+#endif
             .pAllocationCallbacks = nullptr,
             .pDeviceMemoryCallbacks = nullptr,
             .pHeapSizeLimit = nullptr,
@@ -993,7 +998,15 @@ bool Device::HasTimelineSemaphore() const {
 }
 
 bool Device::MustEmulateBGR565() const {
-    return Settings::values.emulate_bgr565.GetValue();
+    if (Settings::values.emulate_bgr565.GetValue()) {
+        return true;
+    }
+    // Without the format, GetSupportedFormat substitutes R5G6B5 (see Alternatives), whose
+    // red and blue are the other way round: the swizzle must be swapped to match.
+    static constexpr VkFormatFeatureFlags usage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                                  VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+                                                  VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return !IsFormatSupported(VK_FORMAT_B5G6R5_UNORM_PACK16, usage, FormatType::Optimal);
 }
 
 bool Device::GetSuitability(bool requires_swapchain) {
@@ -1658,6 +1671,11 @@ void Device::CollectPhysicalMemoryInfo() {
             device_access_memory = std::min<u64>(device_access_memory, normal_memory + scaler_memory);
         }
     }
+#ifdef __SWITCH__
+    // Graphics memory comes out of the one heap that also holds the emulated RAM, the
+    // page tables and the JIT. Budget the caches for 2 GiB so they start evicting early.
+    device_access_memory = std::min<u64>(device_access_memory, 2_GiB);
+#endif
 }
 
 void Device::CollectToolingInfo() {

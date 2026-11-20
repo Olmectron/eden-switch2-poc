@@ -238,11 +238,20 @@ if (ENABLE_CUBEB)
     target_compile_definitions(audio_core PRIVATE HAVE_CUBEB=1)
 endif()
 
-target_sources(audio_core PRIVATE
-    sink/sdl3_sink.cpp
-    sink/sdl3_sink.h)
+if (HORIZON_HOST)
+    target_sources(audio_core PRIVATE
+        sink/horizon_audio_out.cpp
+        sink/horizon_audio_out.h
+        sink/horizon_sink.cpp
+        sink/horizon_sink.h)
+    target_compile_definitions(audio_core PRIVATE HAVE_HORIZON_AUDIO)
+else()
+    target_sources(audio_core PRIVATE
+        sink/sdl3_sink.cpp
+        sink/sdl3_sink.h)
 
-target_link_libraries(audio_core PRIVATE SDL3::SDL3)
-target_compile_definitions(audio_core PRIVATE HAVE_SDL3)
+    target_link_libraries(audio_core PRIVATE SDL3::SDL3)
+    target_compile_definitions(audio_core PRIVATE HAVE_SDL3)
+endif()
 
 create_target_directory_groups(audio_core)

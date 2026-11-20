@@ -1210,11 +1210,21 @@ endif()
 
 target_include_directories(core PRIVATE ${OPUS_INCLUDE_DIRS})
 target_link_libraries(core PUBLIC common PRIVATE audio_core hid_core network video_core nx_tzdb tz)
+
+if (HORIZON_HOST)
+    # Boost.Asio does not build against newlib; swap its users for stubs.
+    get_target_property(_srcs core SOURCES)
+    list(FILTER _srcs EXCLUDE REGEX "debugger/debugger\.cpp$")
+    set_target_properties(core PROPERTIES SOURCES "${_srcs}")
+    target_sources(core PRIVATE debugger/debugger_stub.cpp)
+endif()
 if (MSVC)
     target_link_libraries(core PRIVATE getopt)
 endif()
 
-if (BOOST_NO_HEADERS)
+if (BOOST_NO_HEADERS AND HORIZON_HOST)
+    target_link_libraries(core PUBLIC Boost::container Boost::heap Boost::crc)
+elseif (BOOST_NO_HEADERS)
     target_link_libraries(core PUBLIC Boost::container Boost::heap Boost::asio Boost::process Boost::crc)
 else()
     target_link_libraries(core PUBLIC Boost::headers)

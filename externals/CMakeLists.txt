@@ -139,7 +139,9 @@ if(ENABLE_CUBEB)
     endif()
 endif()
 
-if (NOT YUZU_USE_BUNDLED_SDL3)
+if (HORIZON_HOST)
+    # SDL3 has no Horizon port; audio/input use native libnx backends instead.
+elseif (NOT YUZU_USE_BUNDLED_SDL3)
     if (NOT WIN32)
         # Yuzu itself needs: Atomic Audio Events Joystick Haptic Sensor Threads Timers
         # Since 2.0.18 Atomic+Threads required for HIDAPI/libusb (see https://github.com/libsdl-org/SDL/issues/5095)
@@ -173,7 +175,7 @@ endif()
 
 # Normalize SDL3 link target across package variants.
 # Some SDL3 packages export only SDL3::SDL3-shared or SDL3::SDL3-static.
-if (NOT TARGET SDL3::SDL3)
+if (NOT HORIZON_HOST AND NOT TARGET SDL3::SDL3)
     if (TARGET SDL3::SDL3-shared)
         add_library(SDL3::SDL3 ALIAS SDL3::SDL3-shared)
     elseif (TARGET SDL3::SDL3-static)

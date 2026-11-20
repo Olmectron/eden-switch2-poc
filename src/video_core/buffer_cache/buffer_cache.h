@@ -6,6 +6,9 @@
 
 #pragma once
 
+#ifdef __SWITCH__
+#include "common/horizon/stats.h"
+#endif
 #include <algorithm>
 #include <memory>
 #include <numeric>
@@ -78,6 +81,9 @@ void BufferCache<P>::TickFrame() {
         return;
     }
     runtime.TickFrame(slot_buffers);
+#ifdef __SWITCH__
+    eden_horizon_buffer_bytes = total_used_memory;
+#endif
 
     // Calculate hits and shots and move hit bits to the right
     const u32 hits = std::reduce(channel_state->uniform_cache_hits.begin(),

@@ -18,7 +18,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#else
+#elif !defined(__SWITCH__) // Horizon homebrew is statically linked
 #include <dlfcn.h>
 #endif
 
@@ -85,6 +85,8 @@ std::string DynamicLibrary::GetVersionedFilename(const char* libname, int major,
 bool DynamicLibrary::Open(const char* filename) {
 #ifdef _WIN32
     handle = reinterpret_cast<void*>(LoadLibraryA(filename));
+#elif defined(__SWITCH__)
+    handle = nullptr;
 #else
     handle = dlopen(filename, RTLD_NOW);
 #endif
@@ -97,6 +99,7 @@ void DynamicLibrary::Close() {
 
 #ifdef _WIN32
     FreeLibrary(reinterpret_cast<HMODULE>(handle));
+#elif defined(__SWITCH__)
 #else
     dlclose(handle);
 #endif
@@ -106,6 +109,8 @@ void DynamicLibrary::Close() {
 void* DynamicLibrary::GetSymbolAddress(const char* name) const {
 #ifdef _WIN32
     return reinterpret_cast<void*>(GetProcAddress(reinterpret_cast<HMODULE>(handle), name));
+#elif defined(__SWITCH__)
+    return nullptr;
 #else
     return reinterpret_cast<void*>(dlsym(handle, name));
 #endif

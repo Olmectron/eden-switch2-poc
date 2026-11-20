@@ -471,7 +471,13 @@ bool ISystemSettingsServer::StoreSettingsFile(std::filesystem::path& path, auto&
     }
     file.close();
 
-    std::filesystem::rename(settings_tmp_file, settings_base.replace_extension("dat"));
+    const auto settings_file = settings_base.replace_extension("dat");
+#ifdef __SWITCH__
+    // libnx's rename() does not replace an existing file.
+    std::error_code remove_ec;
+    std::filesystem::remove(settings_file, remove_ec);
+#endif
+    std::filesystem::rename(settings_tmp_file, settings_file);
 
     return true;
 }

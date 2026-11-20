@@ -16,6 +16,9 @@
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "common/string_util.h"
+#ifdef __SWITCH__
+#include "common/horizon/memory_mark.h"
+#endif
 #include "core/arm/exclusive_monitor.h"
 #include "core/core.h"
 
@@ -127,6 +130,9 @@ struct System::Impl {
 
         core_timing.SetMulticore(is_multicore);
         core_timing.Initialize([&system]() { system.RegisterHostThread(); });
+#ifdef __SWITCH__ // bring-up breadcrumb
+        LOG_INFO(Core, "Core timing started");
+#endif
 
         // Create a default fs if one doesn't already exist.
         if (virtual_filesystem == nullptr) {
@@ -144,6 +150,9 @@ struct System::Impl {
         kernel.SetMulticore(is_multicore);
         cpu_manager.SetMulticore(is_multicore);
         cpu_manager.SetAsyncGpu(is_async_gpu);
+#ifdef __SWITCH__ // bring-up breadcrumb
+        LOG_INFO(Core, "System initialized");
+#endif
     }
 
     void ReinitializeIfNecessary(System& system) {
@@ -274,15 +283,30 @@ struct System::Impl {
     }
 
     SystemResultStatus SetupForApplicationProcess(System& system, Frontend::EmuWindow& emu_window) {
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("before host1x");
+#endif
         host1x_core.emplace(system);
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("host1x created");
+#endif
         VideoCore::CreateGPU(gpu_core, emu_window, system);
         if (!gpu_core)
             return SystemResultStatus::ErrorVideoCore;
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("GPU created");
+#endif
 
         audio_core.emplace(system);
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("audio created");
+#endif
 
         service_manager = std::make_shared<Service::SM::ServiceManager>(kernel);
         services.emplace(service_manager, system, stop_event.get_token());
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("audio and services created");
+#endif
 
         is_powered_on = true;
         exit_locked = false;
@@ -302,7 +326,13 @@ struct System::Impl {
             fs_controller.InitTempStorage();
         }
 
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("before kernel");
+#endif
         InitializeKernel(system);
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("kernel initialized");
+#endif
 
         if (params.applet_type == Service::AM::AppletType::Application) {
             current_application_filepath = filepath;
@@ -314,6 +344,9 @@ struct System::Impl {
         Loader::ResultStatus load_result{};
         std::vector<u8> control;
         auto process = Service::AM::CreateApplicationProcess(control, app_loader, load_result, system, file, params.program_id, params.program_index);
+#ifdef __SWITCH__
+        HORIZON_MEMORY_MARK("application process created");
+#endif
         if (load_result != Loader::ResultStatus::Success) {
             LOG_CRITICAL(Core, "Failed to load ROM (Error {})!", load_result);
             ShutdownMainProcess();

@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 
 #include <bit>
@@ -22,6 +24,14 @@
 #include "dynarmic/common/llvm_disassemble.h"
 #include "dynarmic/interface/exclusive_monitor.h"
 #include "dynarmic/ir/location_descriptor.h"
+#include "dynarmic/ir/terminal.h"
+
+#ifdef __SWITCH__
+#    include <variant>
+#    include <vector>
+
+#    include "common/horizon/stats.h"
+#endif
 
 namespace Dynarmic::Backend::Arm64 {
 
@@ -29,12 +39,14 @@ AddressSpace::AddressSpace(std::size_t code_cache_size)
     : ir_block{IR::LocationDescriptor{0}}
     , code_cache_size(code_cache_size)
     , mem(code_cache_size)
-    , code(mem.ptr(), mem.ptr())
+    , code(WritePtr(), mem.ptr())
     , fastmem_manager(exception_handler)
 {
     ASSERT(code_cache_size <= 128 * 1024 * 1024 && "code_cache_size > 128 MiB not currently supported");
 
+#ifndef __SWITCH__ // no fault handling on Horizon hosts
     exception_handler.Register(mem, code_cache_size);
+#endif
     exception_handler.SetFastmemCallback([this](u64 host_pc) {
         return FastmemCallback(host_pc);
     });
@@ -67,21 +79,117 @@ CodePtr AddressSpace::ReverseGetEntryPoint(CodePtr host_pc) {
     return nullptr;
 }
 
+#ifdef __SWITCH__
+// libounce's allocator figures (switch2/memory/heap.h).
+extern "C" {
+std::uint64_t heapGetTotalSize(void);
+std::uint64_t heapGetFreeSize(void);
+}
+
+namespace {
+
+/// The heap stops serving blocks of a few MiB well before it is full, and the JIT's
+/// per-block bookkeeping is the largest thing in it that can be thrown away.
+/// Adds the time since `start` to the frontend's compile time figure.
+struct CompileTimer {
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~CompileTimer() {
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        __atomic_fetch_add(
+            &eden_horizon_jit_compile_micros,
+            static_cast<unsigned long long>(
+                std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()),
+            __ATOMIC_RELAXED);
+    }
+};
+
+bool HeapIsRunningLow() {
+    constexpr std::uint64_t MinFree = 1536ULL * 1024 * 1024;
+    return heapGetFreeSize() < MinFree;
+}
+
+void CollectLeaf(const IR::Term::LeafTerminal& leaf, std::vector<IR::LocationDescriptor>& out) {
+    if (const auto* link = std::get_if<IR::Term::LinkBlock>(&leaf)) {
+        out.push_back(link->next);
+    } else if (const auto* fast = std::get_if<IR::Term::LinkBlockFast>(&leaf)) {
+        out.push_back(fast->next);
+    }
+}
+
+/// The blocks a terminal can jump straight to.
+void CollectSuccessors(const IR::Term::Terminal& terminal, std::vector<IR::LocationDescriptor>& out) {
+    if (const auto* leaf = std::get_if<IR::Term::LeafTerminal>(&terminal)) {
+        CollectLeaf(*leaf, out);
+    } else if (const auto* if_ = std::get_if<IR::Term::If>(&terminal)) {
+        CollectLeaf(if_->then_, out);
+        CollectLeaf(if_->else_, out);
+    } else if (const auto* check_bit = std::get_if<IR::Term::CheckBit>(&terminal)) {
+        CollectLeaf(check_bit->then_, out);
+        CollectLeaf(check_bit->else_, out);
+    } else if (const auto* check_halt = std::get_if<IR::Term::CheckHalt>(&terminal)) {
+        CollectLeaf(check_halt->else_, out);
+    }
+}
+
+} // namespace
+#endif
+
 CodePtr AddressSpace::GetOrEmit(IR::LocationDescriptor descriptor) {
     if (CodePtr block_entry = Get(descriptor)) {
         return block_entry;
     }
+#ifdef __SWITCH__
+    const CompileTimer timer;
+    // Checked here and not in Emit(), which the loop below calls with a block it must keep.
+    constexpr std::size_t MinBlocksToDrop = 16384;
+    if ((++emits_since_heap_check & 0x3FF) == 0 && block_infos.size() >= MinBlocksToDrop &&
+        HeapIsRunningLow()) {
+        __atomic_fetch_add(&eden_horizon_jit_heap_clears, 1, __ATOMIC_RELAXED);
+        ClearCache();
+    }
+#endif
     GenerateIR(ir_block, descriptor);
+#ifdef __SWITCH__
+    // Publishing code is a round trip to another process, far dearer than compiling a
+    // block. Compile the blocks this one leads straight into as well and publish them
+    // together: new code mostly runs on into its successors anyway.
+    std::vector<IR::LocationDescriptor> ahead;
+    CollectSuccessors(ir_block.GetTerminal(), ahead);
+    mem.unprotect();
+#endif
+    CodePtr entry_point;
     try {
-        return Emit(std::move(ir_block)).entry_point;
+        entry_point = Emit(std::move(ir_block)).entry_point;
     } catch (const CodeBufferExhausted&) {
         // Very large blocks may not fit in what is left of the cache. Emission mutates the IR,
         // so regenerate it and retry with an empty cache.
         ProtectCodeMemory();
         ClearCache();
         GenerateIR(ir_block, descriptor);
-        return Emit(std::move(ir_block)).entry_point;
+        entry_point = Emit(std::move(ir_block)).entry_point;
     }
+#ifdef __SWITCH__
+    constexpr std::size_t MaxBlocksAhead = 8;
+    // Emit() clears the cache when it runs low, which would drop the block just made.
+    constexpr std::size_t MinSpaceAhead = 2 * 1024 * 1024;
+    std::size_t emitted_ahead = 0;
+    for (std::size_t i = 0; i < ahead.size() && emitted_ahead < MaxBlocksAhead; ++i) {
+        const IR::LocationDescriptor next = ahead[i];
+        if (Get(next) || GetRemainingSize() < MinSpaceAhead) {
+            continue;
+        }
+        GenerateIR(ir_block, next);
+        CollectSuccessors(ir_block.GetTerminal(), ahead);
+        try {
+            Emit(std::move(ir_block));
+        } catch (const CodeBufferExhausted&) {
+            break;
+        }
+        ++emitted_ahead;
+    }
+    mem.protect();
+#endif
+    return entry_point;
 }
 
 void AddressSpace::InvalidateBasicBlocks(const ::Common::unordered_set<IR::LocationDescriptor>& descriptors) {
@@ -104,6 +212,10 @@ void AddressSpace::InvalidateBasicBlocks(const ::Common::unordered_set<IR::Locat
 }
 
 void AddressSpace::ClearCache() {
+#ifdef __SWITCH__
+    __atomic_fetch_sub(&eden_horizon_jit_blocks, block_infos.size(), __ATOMIC_RELAXED);
+    __atomic_fetch_add(&eden_horizon_jit_cache_clears, 1, __ATOMIC_RELAXED);
+#endif
     block_entries.clear();
     reverse_block_entries.clear();
     block_infos.clear();
@@ -127,6 +239,9 @@ EmittedBlockInfo AddressSpace::Emit(IR::Block block) {
     ASSERT(block_entries.insert({block.Location(), block_info.entry_point}).second);
     ASSERT(reverse_block_entries.insert({block_info.entry_point, block.Location()}).second);
     ASSERT(block_infos.insert({block_info.entry_point, block_info}).second);
+#ifdef __SWITCH__
+    __atomic_fetch_add(&eden_horizon_jit_blocks, 1, __ATOMIC_RELAXED);
+#endif
 
     Link(block_info);
     RelinkForDescriptor(block.Location(), block_info.entry_point);
@@ -144,7 +259,7 @@ void AddressSpace::Link(EmittedBlockInfo& block_info) {
     using namespace oaknut::util;
 
     for (auto [ptr_offset, target] : block_info.relocations) {
-        CodeGenerator c{mem.ptr(), mem.ptr()};
+        CodeGenerator c{WritePtr(), mem.ptr()};
         c.set_xptr(reinterpret_cast<u32*>(block_info.entry_point + ptr_offset));
 
         switch (target) {
@@ -279,8 +394,8 @@ void AddressSpace::Link(EmittedBlockInfo& block_info) {
         }
     }
 
-    for (auto [target_descriptor, list] : block_info.block_relocations) {
-        block_references[target_descriptor].insert(block_info.entry_point);
+    for (const auto& [target_descriptor, list] : block_info.block_relocations) {
+        block_references[target_descriptor].push_back(block_info.entry_point);
         LinkBlockLinks(block_info.entry_point, Get(target_descriptor), list);
     }
 }
@@ -290,7 +405,7 @@ void AddressSpace::LinkBlockLinks(const CodePtr entry_point, const CodePtr targe
     using namespace oaknut::util;
 
     for (auto [ptr_offset, type] : block_relocations_list) {
-        CodeGenerator c{mem.ptr(), mem.ptr()};
+        CodeGenerator c{WritePtr(), mem.ptr()};
         c.set_xptr(reinterpret_cast<u32*>(entry_point + ptr_offset));
 
         switch (type) {

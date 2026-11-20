@@ -26,6 +26,7 @@ enum class WindowSystemType {
     Cocoa,
     Android,
     Xcb,
+    Horizon, ///< libnx NWindow (VK_NN_vi_surface)
 };
 
 /**

@@ -53,7 +53,7 @@ if (ANDROID)
         drivers/android.h)
 
     target_link_libraries(input_common PRIVATE android)
-else()
+elseif (NOT HORIZON_HOST)
     target_sources(input_common PRIVATE
         drivers/joycon.cpp
         drivers/joycon.h
@@ -81,6 +81,14 @@ else()
 
     target_link_libraries(input_common PRIVATE SDL3::SDL3)
     target_compile_definitions(input_common PRIVATE HAVE_SDL3)
+endif()
+
+if (HORIZON_HOST)
+    # Boost.Asio does not build against newlib; swap its users for stubs.
+    get_target_property(_srcs input_common SOURCES)
+    list(FILTER _srcs EXCLUDE REGEX "drivers/udp_client\.cpp$")
+    set_target_properties(input_common PROPERTIES SOURCES "${_srcs}")
+    target_sources(input_common PRIVATE drivers/udp_client_stub.cpp)
 endif()
 
 if (ENABLE_LIBUSB)

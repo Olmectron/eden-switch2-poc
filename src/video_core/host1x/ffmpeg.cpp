@@ -327,6 +327,12 @@ bool DecoderContext::OpenContext(const Decoder& decoder, std::span<const u8> ext
 bool DecoderContext::SendPacket(const Packet& packet) {
     if (const int ret = avcodec_send_packet(m_codec_context, packet.GetPacket()); ret < 0 && ret != AVERROR_EOF && ret != AVERROR(EAGAIN)) {
         LOG_ERROR(HW_GPU, "avcodec_send_packet error: {}", AVError(ret));
+#ifdef __SWITCH__ // bring-up: is the decoder being asked for something absurd?
+        LOG_ERROR(HW_GPU, "  packet {} bytes, picture {}x{}, coded {}x{}, threads {}",
+                  packet.GetPacket()->size, m_codec_context->width, m_codec_context->height,
+                  m_codec_context->coded_width, m_codec_context->coded_height,
+                  m_codec_context->thread_count);
+#endif
         return false;
     }
 

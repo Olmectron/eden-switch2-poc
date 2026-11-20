@@ -179,6 +179,11 @@ constexpr int SD_BOTH = SHUT_RDWR;
 int interrupt_pipe_fd[2] = {-1, -1};
 
 void Initialize() {
+#ifdef __SWITCH__
+    // TODO: libnx has no pipe(); blocking guest socket calls cannot be interrupted yet.
+    // poll() ignores the negative descriptors left in interrupt_pipe_fd.
+    return;
+#endif
     if (pipe(interrupt_pipe_fd) != 0) {
         LOG_ERROR(Network, "Failed to create interrupt pipe!");
     }
@@ -197,6 +202,9 @@ void Finalize() {
 }
 
 void InterruptSocketOperations() {
+    if (interrupt_pipe_fd[1] < 0) {
+        return;
+    }
     u8 value = 0;
     ASSERT(write(interrupt_pipe_fd[1], &value, sizeof(value)) == 1);
 }

@@ -436,6 +436,24 @@ Vp9FrameContainer VP9::GetCurrentFrame() {
     {
         // gpu.SyncGuestHost(); epic, why?
         current_frame.info = GetVp9PictureInfo();
+        // The size comes from guest memory. A frame is at most a few MiB: anything far
+        // beyond that is garbage, and allocating it would take the emulator down.
+        constexpr u32 MaxBitstreamSize = 8 * 1024 * 1024;
+#ifdef __SWITCH__ // bring-up: what the game hands the decoder
+        static int logged_frames = 0;
+        if (logged_frames < 6 || current_frame.info.bitstream_size > 1024 * 1024) {
+            ++logged_frames;
+            LOG_INFO(HW_GPU, "VP9 frame: {} bytes, {}x{}, picture info at {:#x}, bitstream at {:#x}",
+                     current_frame.info.bitstream_size, current_frame.info.frame_size.width,
+                     current_frame.info.frame_size.height, regs.picture_info_offset.Address(),
+                     regs.frame_bitstream_offset.Address());
+        }
+#endif
+        if (current_frame.info.bitstream_size > MaxBitstreamSize) {
+            LOG_ERROR(HW_GPU, "VP9 frame claims {} bytes of bitstream, ignoring it",
+                      current_frame.info.bitstream_size);
+            current_frame.info.bitstream_size = 0;
+        }
         current_frame.bit_stream.resize(current_frame.info.bitstream_size);
         host1x.gmmu_manager.ReadBlock(regs.frame_bitstream_offset.Address(), current_frame.bit_stream.data(), current_frame.info.bitstream_size);
     }

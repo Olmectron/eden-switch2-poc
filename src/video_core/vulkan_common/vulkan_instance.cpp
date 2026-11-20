@@ -19,6 +19,11 @@
 #include "video_core/vulkan_common/vulkan_instance.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
+#ifdef __SWITCH__
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance,
+                                                                        const char* name);
+#endif
+
 namespace Vulkan {
 namespace {
 
@@ -58,6 +63,10 @@ namespace {
 #elif defined(__HAIKU__)
     case Core::Frontend::WindowSystemType::Xcb:
         extensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+        break;
+#elif defined(__SWITCH__)
+    case Core::Frontend::WindowSystemType::Horizon:
+        extensions.push_back(VK_NN_VI_SURFACE_EXTENSION_NAME);
         break;
 #else
     case Core::Frontend::WindowSystemType::X11:
@@ -116,6 +125,10 @@ void RemoveUnavailableLayers(const vk::InstanceDispatch& dld, std::vector<const 
 vk::Instance CreateInstance(const Common::DynamicLibrary& library, vk::InstanceDispatch& dld,
                             u32 required_version, Core::Frontend::WindowSystemType window_type,
                             bool enable_validation) {
+#ifdef __SWITCH__
+    // The driver (OunceVK) is linked statically; there is no library to open.
+    dld.vkGetInstanceProcAddr = ::vkGetInstanceProcAddr;
+#else
     if (!library.IsOpen()) {
         LOG_ERROR(Render_Vulkan, "Vulkan library not available");
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
@@ -124,6 +137,7 @@ vk::Instance CreateInstance(const Common::DynamicLibrary& library, vk::InstanceD
         LOG_ERROR(Render_Vulkan, "vkGetInstanceProcAddr not present in Vulkan");
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
     }
+#endif
     if (!vk::Load(dld)) {
         LOG_ERROR(Render_Vulkan, "Failed to load Vulkan function pointers");
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);

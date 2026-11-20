@@ -290,6 +290,15 @@ static inline u64 ParseIsoTimestamp(const std::string& iso) {
 
 #ifdef _WIN32
     return static_cast<u64>(_mkgmtime(&tm));
+#elif defined(__SWITCH__)
+    // newlib has no timegm; days-from-civil for the proleptic Gregorian calendar.
+    const s64 y = s64(tm.tm_year) + 1900 - (tm.tm_mon < 2 ? 1 : 0);
+    const s64 era = (y >= 0 ? y : y - 399) / 400;
+    const s64 yoe = y - era * 400;
+    const s64 doy = (153 * ((tm.tm_mon + 10) % 12) + 2) / 5 + tm.tm_mday - 1;
+    const s64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const s64 days = era * 146097 + doe - 719468;
+    return static_cast<u64>(days * 86400 + tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec);
 #else
     return static_cast<u64>(timegm(&tm));
 #endif

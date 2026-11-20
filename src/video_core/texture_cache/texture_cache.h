@@ -6,6 +6,9 @@
 
 #pragma once
 
+#ifdef __SWITCH__
+#include "common/horizon/stats.h"
+#endif
 #include <limits>
 #include <optional>
 #include <bit>
@@ -176,6 +179,9 @@ void TextureCache<P>::TickFrame() {
     if (total_used_memory > minimum_memory) {
         RunGarbageCollector();
     }
+#ifdef __SWITCH__
+    eden_horizon_texture_bytes = total_used_memory;
+#endif
     sentenced_images.Tick();
     sentenced_framebuffers.Tick();
     sentenced_image_view.Tick();

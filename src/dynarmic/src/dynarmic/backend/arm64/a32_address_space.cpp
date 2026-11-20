@@ -387,7 +387,12 @@ void A32AddressSpace::EmitPrelude() {
 
     prelude_info.end_of_prelude = code.offset();
 
+#ifdef __SWITCH__
+    // Publishing copies the range; do not copy the whole (empty) cache.
+    mem.invalidate(mem.ptr(), static_cast<std::size_t>(prelude_info.end_of_prelude));
+#else
     mem.invalidate_all();
+#endif
     ProtectCodeMemory();
 }
 

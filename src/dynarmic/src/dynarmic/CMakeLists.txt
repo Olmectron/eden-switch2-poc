@@ -361,14 +361,20 @@ elseif (APPLE)
             backend/exception_handler_macos_mig.c
         )
     endif()
-elseif (UNIX AND NOT HAIKUOS)
-    # Haiku lacks <ucontext.h>
+elseif (UNIX AND NOT HAIKUOS AND NOT HORIZON_HOST)
+    # Haiku lacks <ucontext.h>; Horizon hosts have no signals at all
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(dynarmic PRIVATE rt)
     endif()
     target_sources(dynarmic PRIVATE backend/exception_handler_posix.cpp)
 else()
     target_sources(dynarmic PRIVATE backend/exception_handler_generic.cpp)
+endif()
+
+if (HORIZON_HOST AND ARCHITECTURE_arm64)
+    target_sources(dynarmic PRIVATE
+        backend/arm64/horizon_code_block.cpp
+        backend/arm64/horizon_code_block.h)
 endif()
 
 include(CreateDirectoryGroups)

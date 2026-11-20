@@ -447,6 +447,19 @@ void RememberCurrentThreadNice(pid_t tid, s32 nice_value) {
 #include "common/x64/rdtsc.h"
 #endif
 
+#include <string_view>
+#include <utility>
+
+#ifdef __SWITCH__
+// From libnx; <switch.h> is not included here because its global names clash with ours.
+extern "C" {
+u32 svcGetInfo(u64* out, u32 id0, u32 handle, u64 id1);
+u32 svcSetThreadCoreMask(u32 handle, s32 preferred_core, u64 affinity_mask);
+u32 threadGetCurHandle(void);
+void eden_horizon_register_thread(const char* name, unsigned handle);
+}
+#endif
+
 namespace Common {
 
 void SetCurrentThreadPriority(ThreadPriority new_priority) {
@@ -490,6 +503,9 @@ void SetCurrentThreadPriority(ThreadPriority new_priority) {
         LOG_DEBUG(Common, "Could not set thread nice value to {}: {}", nice_value,
                   GetLastErrorMsg());
     }
+#elif defined(__SWITCH__)
+    // TODO: map to svcSetThreadPriority once thread roles are tuned for Horizon.
+    (void)new_priority;
 #else
     const s32 max_prio = sched_get_priority_max(SCHED_OTHER);
     const s32 min_prio = sched_get_priority_min(SCHED_OTHER);
@@ -528,6 +544,25 @@ void SetCurrentThreadName(const char* name) {
         std::memcpy(buf, name, len);
         buf[len] = '\0';
         pthread_setname_np(pthread_self(), buf);
+    }
+#elif defined(__SWITCH__)
+    // libnx has no thread names, but the name tells which of the emulator's busy threads
+    // this is: give each a core of its own to start on. The scheduler keeps every core
+    // allowed, so this is a preference and not a pin.
+    eden_horizon_register_thread(name, threadGetCurHandle());
+    static constexpr std::pair<std::string_view, s32> preferred_cores[]{
+        {"CPUCore_0", 0}, {"CPUCore_1", 1}, {"CPUCore_2", 2}, {"CPUCore_3", 3},
+        {"GPU", 4},       {"VulkanWorker", 5},
+    };
+    for (const auto& [thread_name, core] : preferred_cores) {
+        if (thread_name == name) {
+            u64 allowed = 0;
+            if (svcGetInfo(&allowed, 0 /* CoreMask */, 0xFFFF8001 /* this process */, 0) == 0 &&
+                (allowed & (u64{1} << core)) != 0) {
+                svcSetThreadCoreMask(0xFFFF8000 /* this thread */, core, allowed);
+            }
+            break;
+        }
     }
 #elif defined(_WIN32)
     // MinGW with the POSIX threading model does not support pthread_setname_np

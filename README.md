@@ -7,6 +7,73 @@
 -->
 <!-- lang: en-GB -->
 
+# Eden on Switch 2 — proof of concept
+
+> **This is an unofficial, experimental proof of concept. It is unstable.**
+> It has improved a lot, but expect crashes, hangs, stutter and missing graphics.
+> It is not affiliated with or supported by the Eden project: please do **not** report
+> problems with this port to Eden. Use this repository's issues instead.
+
+A port of the [Eden](https://git.eden-emu.dev/eden-emu/eden) Switch 1 emulator to Switch 2
+homebrew, built with [ounce-devkit](https://github.com/ouncebrew/ounce-devkit) (libounce,
+OunceVK and libkaihen) and run under kaiHEN. It is based on Eden commit `d85bad8`; the
+original README follows below.
+
+*Español: prueba de concepto no oficial de Eden para homebrew de Switch 2. Sigue siendo
+inestable, aunque ya mejoró bastante. No reportes fallos de este port al proyecto Eden.*
+
+## State
+
+| Game | Result |
+|---|---|
+| Luigi's Mansion 2 HD | Playable: correct picture, audio, controls, gyro, rumble, saves |
+| The Legend of Zelda: Echoes of Wisdom | Playable at about 30 fps with *Address space* set to `compact`; stutters while new code is compiled, rifts are not drawn, and loading a save sometimes hangs |
+| Super Mario 3D World + Bowser's Fury | Boots and plays; only tested for a few minutes |
+| Mario Strikers: Battle League | Black screen after the loading icon |
+
+Nothing else has been tested.
+
+What works: the dynarmic JIT (through kaiHEN's JIT memory), Vulkan rendering on NVK,
+audio output, one controller with motion and rumble, saves, the disk shader cache, a file
+picker for the SD card and a small options screen.
+
+Known limits:
+
+- No fastmem and no NCE: kaiHEN does not hand CPU exceptions to homebrew, so every guest
+  memory access goes through the page table.
+- Memory is tight. The emulator, the guest's 4 GiB and the GPU share one heap of about
+  9 GiB, and long sessions can still run out.
+- New guest code stutters while it is compiled, most of all in handheld mode.
+- No touch screen, no network, one player, and no way back to the game list without
+  leaving the emulator.
+
+## Using it
+
+1. Copy `eden.nro` to `sdmc:/switch/`.
+2. Put your own `prod.keys` and `title.keys` in `sdmc:/switch/eden/.local/share/eden/keys/`.
+3. Start it from the homebrew menu and choose a game file. **X** opens the options.
+4. Hold **+** and **−** together to leave the game.
+
+The log is written to `sdmc:/switch/eden/.local/share/eden/log/eden_log.txt`.
+
+No games, keys or firmware are included, and none will be provided.
+
+## Building
+
+On Windows with MSYS2 and devkitPro's ounce-devkit packages installed:
+
+```sh
+sh tools/switch2/configure.sh
+sh tools/switch2/build.sh eden-horizon_nro
+```
+
+The result is `build/switch2/bin/eden.nro`. The port's own code is in `src/eden_horizon`
+and `src/common/horizon`; the rest are changes guarded by `__SWITCH__` or `HORIZON_HOST`.
+
+This port was written with the help of an AI coding assistant.
+
+---
+
 <h1 align="center">
   <br>
   <a href="https://git.eden-emu.dev/eden-emu/eden"><img src="./dist/qt_themes/default/icons/256x256/eden.png" alt="Eden" width="200"></a>

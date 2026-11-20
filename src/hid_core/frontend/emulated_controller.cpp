@@ -1237,6 +1237,11 @@ bool EmulatedController::SetVibration(DeviceIndex device_index, const VibrationV
     }
     const std::size_t index = static_cast<std::size_t>(device_index);
     if (!output_devices[index]) {
+#ifdef __SWITCH__
+        // The Horizon frontend drives the console's motors itself from
+        // GetActualVibrationValue(): no input engine stands behind the controller.
+        last_vibration_value[index] = vibration;
+#endif
         return false;
     }
 

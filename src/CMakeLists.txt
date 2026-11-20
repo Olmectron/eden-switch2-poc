@@ -294,6 +294,10 @@ endif()
 
 # ditto, hydrocarbon
 if (hydrocarbon_ADDED)
+    if (HORIZON_HOST)
+        # libnx provides BSD sockets, but devkitA64 does not define __unix__
+        target_compile_definitions(hydrocarbon PRIVATE __unix__)
+    endif()
     fix_modules(hydrocarbon PRIVATE)
 else()
     fix_modules(hydro::carbon INTERFACE)
@@ -325,6 +329,10 @@ add_subdirectory(shader_recompiler)
 
 if (YUZU_TESTS)
     add_subdirectory(tests)
+endif()
+
+if (HORIZON_HOST)
+    add_subdirectory(eden_horizon)
 endif()
 
 if (YUZU_CMD)
