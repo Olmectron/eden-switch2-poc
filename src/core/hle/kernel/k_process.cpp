@@ -1223,7 +1223,7 @@ Result KProcess::LoadFromMetadata(KernelCore& kernel, const FileSys::ProgramMeta
 #ifdef __SWITCH__
     // The page table is a flat array that this host cannot leave unbacked: 1 GiB for 39
     // bits, 128 MiB for 36. The frontend may ask for the smaller space regardless.
-    if (eden_horizon_compact_address_space != 0 &&
+    if (eden_horizon_compact_address_space == 1 &&
         address_space_type == FileSys::ProgramAddressSpaceType::Is39Bit) {
         LOG_WARNING(Kernel, "Giving a 39-bit program a 36-bit address space to save memory");
         address_space_type = FileSys::ProgramAddressSpaceType::Is36Bit;

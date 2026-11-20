@@ -215,6 +215,9 @@ private:
     KMemoryBlockManager m_memory_block_manager{};
     u32 m_allocate_option{};
     u32 m_address_space_width{};
+    /// Bits the page table covers: fewer than m_address_space_width when a Horizon host
+    /// gives a 39-bit process a narrower space (see InitializeForProcess).
+    u32 m_page_table_width{};
     bool m_is_kernel{};
     bool m_enable_aslr{};
     bool m_enable_device_address_space_merge{};
@@ -475,7 +478,7 @@ private:
         // Validate pre-conditions.
         ASSERT(this->IsLockedByCurrentThread());
 
-        if (virt_addr > (1ULL << m_address_space_width)) {
+        if (virt_addr > (1ULL << m_page_table_width)) {
             return false;
         }
 
@@ -716,7 +719,7 @@ public:
     }
 
     u32 GetAddressSpaceWidth() const {
-        return m_address_space_width;
+        return m_page_table_width;
     }
 
 public:

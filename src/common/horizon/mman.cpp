@@ -97,6 +97,7 @@ unsigned long getauxval(unsigned long type) {
 // See common/horizon/stats.h.
 unsigned long long eden_horizon_texture_bytes = 0;
 unsigned long long eden_horizon_buffer_bytes = 0;
+unsigned long long eden_horizon_texture_evictions = 0;
 unsigned long long eden_horizon_jit_blocks = 0;
 unsigned long long eden_horizon_jit_cache_clears = 0;
 unsigned long long eden_horizon_jit_heap_clears = 0;
@@ -129,10 +130,16 @@ unsigned eden_horizon_jit_cache_megabytes(int core) {
     // A block took about 290 bytes of cache in the sessions measured; half as much again
     // leaves room for what this session adds. A core with no list did next to nothing.
     constexpr unsigned long long BytesPerBlock = 435;
-    constexpr unsigned MinMegabytes = 24, MaxMegabytes = 112;
+    // A list from a session cut short says little: a core that did real work keeps a
+    // sensible cache whatever its list says.
+    constexpr unsigned long long BusyBlocks = 8192;
+    constexpr unsigned IdleMegabytes = 24, BusyMegabytes = 48, MaxMegabytes = 112;
+    if (blocks[core] < BusyBlocks) {
+        return IdleMegabytes;
+    }
     const unsigned megabytes = static_cast<unsigned>((blocks[core] * BytesPerBlock) >> 20) + 1;
-    return megabytes < MinMegabytes ? MinMegabytes
-                                    : megabytes > MaxMegabytes ? MaxMegabytes : megabytes;
+    return megabytes < BusyMegabytes ? BusyMegabytes
+                                     : megabytes > MaxMegabytes ? MaxMegabytes : megabytes;
 }
 
 // The emulator's named threads, for the frontend's profiler (see common/thread.cpp).

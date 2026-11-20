@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <vector>
 
 #include <format>
@@ -115,10 +116,10 @@ std::vector<Platform::MenuOption> DefaultOptions() {
     return {
         {"resolution", "Internal resolution",
          "Scale applied to what the game renders. Below 1 is faster and blurrier.",
-         {"0.5", "0.75", "1", "1.5", "2"}, 2},
+         {"0.5", "0.75", "1", "1.5", "2"}, 2, true},
         {"console", "Console mode",
          "What the game is told. Most games render 1080p docked and 720p handheld.",
-         {"docked", "handheld"}, 1},
+         {"docked", "handheld"}, 1, true},
         {"show_fps", "Show FPS and speed",
          "Game frames per second and emulation speed, in the top left corner.",
          {"on", "off"}, 0},
@@ -126,11 +127,27 @@ std::vector<Platform::MenuOption> DefaultOptions() {
          "Console mode and internal resolution, under the FPS.",
          {"on", "off"}, 0},
         {"address_space", "Address space",
-         "compact gives 39-bit games a smaller address space and frees about 900 MiB. Use game if one does not start.",
-         {"compact", "game"}, 0},
+         "How much address space most games get. The emulator keeps a table that\n"
+         "covers all of it in memory, so a smaller space leaves more memory for the\n"
+         "game and for compiled code.\n\n"
+         "compact  64 GiB, table of 128 MiB. The most free memory. A few games\n"
+         "         abort when they start with it.\n"
+         "game     256 GiB, table of 512 MiB. For games that fail in compact.\n"
+         "full     512 GiB as on the console, table of 1 GiB. Long sessions may\n"
+         "         run out of memory. Only if a game fails in the other two.\n\n"
+         "Start with compact. Give a game that does not start its own value with Y.",
+         {"compact", "game", "full"}, 0, true},
+        {"gpu", "GPU emulation",
+         "accurate follows the console's GPU closely. fast skips some of the waits\n"
+         "between the game and the GPU, as Eden does on phones: quicker in heavy\n"
+         "games, and it may break an effect here and there.",
+         {"accurate", "fast"}, 0, true},
+        {"language", "Game language",
+         "The language and region the games are told the console is set to.",
+         {"en-US", "es-419", "es-ES", "fr", "de", "it", "pt-BR", "ja"}, 0},
         {"cpu_boost", "CPU boost",
          "Asks the console for its loading-screen CPU clock. Faster, at the cost of battery and heat.",
-         {"off", "on"}, 1},
+         {"off", "on"}, 1, true},
         {"jit_cache", "CPU code cache on disk",
          "Remembers the game code compiled in a session and compiles it at once on the next start, so it stutters less.",
          {"on", "off"}, 0},
@@ -163,9 +180,21 @@ std::string StatusLine(const std::vector<Platform::MenuOption>& options) {
     return line;
 }
 
-/// Reads "name=value" lines over the defaults.
-void LoadOptions(std::vector<Platform::MenuOption>& options) {
-    std::ifstream file{SettingsFile};
+/// The game's file name without folder, extension or anything unfit for a file name.
+std::string GameName(const std::string& game_path) {
+    std::string name = game_path.substr(game_path.find_last_of('/') + 1);
+    name = name.substr(0, name.find_last_of('.'));
+    std::erase_if(name, [](unsigned char c) { return std::isalnum(c) == 0 && c != '_'; });
+    return name.substr(0, 60);
+}
+
+std::string GameSettingsFile(const std::string& game_path) {
+    return "sdmc:/switch/eden/games/" + GameName(game_path) + ".txt";
+}
+
+/// Reads "name=value" lines over the values `options` has.
+void LoadOptions(std::vector<Platform::MenuOption>& options, const std::string& path = SettingsFile) {
+    std::ifstream file{path};
     for (std::string line; std::getline(file, line);) {
         std::erase_if(line, [](unsigned char c) { return std::isspace(c) != 0; });
         const std::size_t equals = line.find('=');
@@ -173,7 +202,7 @@ void LoadOptions(std::vector<Platform::MenuOption>& options) {
             continue;
         }
         for (auto& option : options) {
-            if (line.compare(0, equals, option.key) != 0) {
+            if (line.substr(0, equals) != option.key) {
                 continue;
             }
             const auto choice = std::ranges::find(option.choices, line.substr(equals + 1));
@@ -190,6 +219,72 @@ void SaveOptions(const std::vector<Platform::MenuOption>& options) {
         file << option.key << '=' << option.choices[static_cast<std::size_t>(option.selected)]
              << std::endl;
     }
+}
+
+/// What a game inherits when it has no value of its own for an option.
+constexpr const char* Inherit = "general";
+
+/// The options a game can have of its own, each with "general" as its first choice and
+/// set to what the game's file says.
+std::vector<Platform::MenuOption> GameOptions(const std::vector<Platform::MenuOption>& general,
+                                              const std::string& game_path) {
+    std::vector<Platform::MenuOption> options;
+    for (const auto& option : general) {
+        if (option.per_game) {
+            options.push_back(option);
+            options.back().choices.insert(options.back().choices.begin(), Inherit);
+            options.back().selected = 0;
+        }
+    }
+    LoadOptions(options, GameSettingsFile(game_path));
+    return options;
+}
+
+/// Writes only what the game does not inherit.
+void SaveGameOptions(const std::vector<Platform::MenuOption>& options,
+                     const std::string& game_path) {
+    mkdir("sdmc:/switch/eden/games", 0777);
+    const std::string path = GameSettingsFile(game_path);
+    if (std::ranges::all_of(options, [](const auto& option) { return option.selected == 0; })) {
+        std::remove(path.c_str());
+        return;
+    }
+    std::ofstream file{path, std::ios::trunc};
+    for (const auto& option : options) {
+        if (option.selected != 0) {
+            file << option.key << '=' << option.choices[static_cast<std::size_t>(option.selected)]
+                 << std::endl;
+        }
+    }
+}
+
+/// The picker's screen for one game's options.
+void EditGameOptions(const std::vector<Platform::MenuOption>& general,
+                     const std::string& game_path) {
+    std::vector<Platform::MenuOption> options = GameOptions(general, game_path);
+    // Show what "general" stands for right now.
+    for (auto& option : options) {
+        option.choices[0] = std::string{Inherit} + " (" + OptionValue(general, option.key) + ")";
+    }
+    Platform::EditOptions(options, "options for " + GameName(game_path) + " only");
+    for (auto& option : options) {
+        option.choices[0] = Inherit;
+    }
+    SaveGameOptions(options, game_path);
+}
+
+/// The general options with the game's own values over them.
+std::vector<Platform::MenuOption> EffectiveOptions(std::vector<Platform::MenuOption> general,
+                                                   const std::string& game_path) {
+    for (const auto& own : GameOptions(general, game_path)) {
+        if (own.selected == 0) {
+            continue;
+        }
+        const auto option = std::ranges::find(general, own.key, &Platform::MenuOption::key);
+        option->selected = own.selected - 1;
+        LOG_INFO(Frontend, "Option {} is this game's own", own.key);
+    }
+    return general;
 }
 
 void ApplyOptions(const std::vector<Platform::MenuOption>& options) {
@@ -211,7 +306,28 @@ void ApplyOptions(const std::vector<Platform::MenuOption>& options) {
                                                           ? Settings::ConsoleMode::Handheld
                                                           : Settings::ConsoleMode::Docked);
         } else if (option.key == "address_space") {
-            eden_horizon_compact_address_space = choice == "compact" ? 1 : 0;
+            eden_horizon_compact_address_space = choice == "compact" ? 1 : choice == "game" ? 2 : 0;
+        } else if (option.key == "gpu" && choice == "fast") {
+            Settings::values.gpu_accuracy.SetValue(Settings::GpuAccuracy::Low);
+            Settings::values.use_reactive_flushing.SetValue(false);
+        } else if (option.key == "language") {
+            using Settings::Language, Settings::Region;
+            static constexpr std::tuple<std::string_view, Language, Region> languages[]{
+                {"en-US", Language::EnglishAmerican, Region::Usa},
+                {"es-419", Language::SpanishLatin, Region::Usa},
+                {"es-ES", Language::Spanish, Region::Europe},
+                {"fr", Language::French, Region::Europe},
+                {"de", Language::German, Region::Europe},
+                {"it", Language::Italian, Region::Europe},
+                {"pt-BR", Language::PortugueseBrazilian, Region::Usa},
+                {"ja", Language::Japanese, Region::Japan},
+            };
+            for (const auto& [text, language, region] : languages) {
+                if (choice == text) {
+                    Settings::values.language_index.SetValue(language);
+                    Settings::values.region_index.SetValue(region);
+                }
+            }
         } else if (option.key == "cpu_boost" && choice == "on") {
             LOG_INFO(Frontend, "CPU boost requested, result {:#x}", Platform::SetCpuBoost(true));
         } else if (option.key == "shader_cache") {
@@ -355,11 +471,11 @@ public:
                  (compile - last_compile) / 1000);
         LOG_INFO(Frontend,
                  "Memory detail: textures {} MiB, buffers {} MiB, JIT blocks {}, cache clears {} ({} "
-                 "for heap), warmed {} blocks in {} ms",
+                 "for heap), warmed {} blocks in {} ms, {} textures evicted",
                  eden_horizon_texture_bytes >> 20, eden_horizon_buffer_bytes >> 20,
                  eden_horizon_jit_blocks, eden_horizon_jit_cache_clears,
                  eden_horizon_jit_heap_clears, eden_horizon_jit_warm_blocks,
-                 eden_horizon_jit_warm_micros / 1000);
+                 eden_horizon_jit_warm_micros / 1000, eden_horizon_texture_evictions);
         last_count = count;
         last_bytes = bytes;
         last_micros = micros;
@@ -453,8 +569,15 @@ int main(int argc, char** argv) {
 
     std::vector<Platform::MenuOption> options = DefaultOptions();
     LoadOptions(options);
-    const std::string game_path = argc > 1 ? argv[1] : Platform::BrowseForGame(options);
+    const std::string game_path =
+        argc > 1 ? argv[1]
+                 : Platform::BrowseForGame(options, [&options](const std::string& path) {
+                       EditGameOptions(options, path);
+                   });
     SaveOptions(options);
+    if (!game_path.empty()) {
+        options = EffectiveOptions(std::move(options), game_path);
+    }
     ApplyOptions(options);
     if (game_path.empty()) {
         LOG_INFO(Frontend, "No game chosen");
@@ -464,9 +587,7 @@ int main(int argc, char** argv) {
     LOG_INFO(Frontend, "Booting {}", game_path);
     if (OptionIs(options, "jit_cache", "on")) {
         // Named after the game file: the cores' JITs are made before the title is known.
-        std::string name = game_path.substr(game_path.find_last_of('/') + 1);
-        name = name.substr(0, name.find_last_of('.'));
-        std::erase_if(name, [](unsigned char c) { return std::isalnum(c) == 0 && c != '_'; });
+        const std::string name = GameName(game_path);
         mkdir("sdmc:/switch/eden/jit", 0777);
         std::snprintf(eden_horizon_jit_cache_prefix, sizeof(eden_horizon_jit_cache_prefix),
                       "sdmc:/switch/eden/jit/%.60s_%s", name.c_str(),

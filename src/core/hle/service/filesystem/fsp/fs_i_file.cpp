@@ -33,6 +33,13 @@ Result IFile::Read(
     LOG_DEBUG(Service_FS, "called, option={}, offset={:#x}, length={}", option.value, offset,
               size);
 
+#ifdef __SWITCH__
+    // Bring-up aid: a read with no buffer to read into fails with ResultNullptrArgument.
+    if (out_buffer.data() == nullptr && size != 0) {
+        LOG_ERROR(Service_FS, "Read without a buffer: offset={:#x} size={:#x} buffer size={:#x}",
+                  offset, size, out_buffer.size());
+    }
+#endif
     // Read the data from the Storage backend
     R_RETURN(
         backend->Read(reinterpret_cast<size_t*>(out_size.Get()), offset, out_buffer.data(), size));

@@ -8,8 +8,10 @@
 
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <optional>
+#include <vector>
 
 #include "common/common_types.h"
 #include <oaknut/code_block.hpp>
@@ -62,6 +64,22 @@ protected:
 
     int warm_slot = -1;
     std::vector<u64> warm_list;
+
+    /// Direct-mapped cache in front of block_entries. The dispatcher looks a block up on
+    /// every jump it cannot link, and a map of several hundred thousand blocks misses the
+    /// CPU's caches on nearly every one of them.
+    struct LookupEntry {
+        u64 descriptor;
+        CodePtr entry_point; ///< Null when the entry is empty
+    };
+    static constexpr std::size_t LookupCacheBits = 16;
+    std::vector<LookupEntry> lookup_cache = std::vector<LookupEntry>(std::size_t{1} << LookupCacheBits);
+    static std::size_t LookupIndex(u64 descriptor) {
+        return static_cast<std::size_t>((descriptor * 0x9E3779B97F4A7C15ULL) >> (64 - LookupCacheBits));
+    }
+    void ClearLookupCache() {
+        std::fill(lookup_cache.begin(), lookup_cache.end(), LookupEntry{});
+    }
 #endif
     virtual EmitConfig GetEmitConfig() = 0;
     virtual void RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& block_info) = 0;

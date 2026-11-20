@@ -4,7 +4,12 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+
 #include "common/scope_exit.h"
+#ifdef __SWITCH__
+#include "common/horizon/stats.h"
+#endif
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_address_space_info.h"
@@ -188,6 +193,7 @@ Result KPageTableBase::InitializeForKernel(bool is_64_bit, KVirtualAddress start
     m_cached_physical_heap_region = nullptr;
 
     // Initialize our implementation.
+    m_page_table_width = m_address_space_width;
     m_impl.Resize(m_address_space_width, PageBits);
 
     // Set the tracking memory.
@@ -200,7 +206,16 @@ Result KPageTableBase::InitializeForKernel(bool is_64_bit, KVirtualAddress start
 
 Result KPageTableBase::InitializeForProcess(Svc::CreateProcessFlag as_type, bool enable_aslr, bool enable_das_merge, bool from_back, KMemoryManager::Pool pool, KProcessAddress code_address, size_t code_size, KSystemResource* system_resource, KResourceLimit* resource_limit, Core::Memory::Memory& memory, KProcessAddress aslr_space_start) {
     // Calculate region extents.
-    const size_t as_width = GetAddressSpaceWidth(as_type);
+    size_t as_width = GetAddressSpaceWidth(as_type);
+#ifdef __SWITCH__
+    // The page table is a flat array this host cannot leave unbacked, 1 GiB of it for 39
+    // bits. The regions of a 39-bit process add up to under 256 GiB, so they fit in 38 bits
+    // and half the table; only the room left for address randomization shrinks.
+    const bool narrowed = as_width == 39 && eden_horizon_compact_address_space == 2;
+    if (narrowed) {
+        as_width = 38;
+    }
+#endif
     const KProcessAddress start = 0;
     const KProcessAddress end = (1ULL << as_width);
 
@@ -242,6 +257,11 @@ Result KPageTableBase::InitializeForProcess(Svc::CreateProcessFlag as_type, bool
         m_code_region_start = m_address_space_start + aslr_space_start +
                               GetSpaceStart(KAddressSpaceInfo::Type::Map39Bit);
         m_code_region_end = m_code_region_start + GetSpaceSize(KAddressSpaceInfo::Type::Map39Bit);
+#ifdef __SWITCH__
+        if (narrowed) {
+            m_code_region_end = (std::min)(m_code_region_end, end);
+        }
+#endif
         m_alias_code_region_start = m_code_region_start;
         m_alias_code_region_end = m_code_region_end;
         process_code_start = Common::AlignDown(GetInteger(code_address), RegionAlignment);
@@ -432,7 +452,8 @@ Result KPageTableBase::InitializeForProcess(Svc::CreateProcessFlag as_type, bool
     ASSERT(heap_last < kmap_start || kmap_last < heap_start);
 
     // Initialize our implementation.
-    m_impl.Resize(m_address_space_width, PageBits);
+    m_page_table_width = static_cast<u32>(as_width);
+    m_impl.Resize(m_page_table_width, PageBits);
 
     // Set the tracking memory.
     m_memory = std::addressof(memory);

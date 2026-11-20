@@ -9,6 +9,7 @@
 extern "C" {
 extern unsigned long long eden_horizon_texture_bytes; ///< Texture cache's own estimate
 extern unsigned long long eden_horizon_buffer_bytes;  ///< Buffer cache's own estimate
+extern unsigned long long eden_horizon_texture_evictions; ///< Textures the collector dropped
 extern unsigned long long eden_horizon_jit_blocks;    ///< Compiled blocks alive, all cores
 extern unsigned long long eden_horizon_jit_cache_clears;
 extern unsigned long long eden_horizon_jit_heap_clears;     ///< Those made to free heap
@@ -16,7 +17,8 @@ extern unsigned long long eden_horizon_jit_compile_micros;  ///< Compiling and p
 /// Sizes in bytes of the mappings of 8 MiB and more made through the mmap() shim
 extern unsigned long long eden_horizon_large_mmaps[64];
 extern int eden_horizon_large_mmap_count;
-/// Set by the frontend: nonzero gives 39-bit programs a 36-bit address space
+/// Set by the frontend, for 39-bit programs: 0 leaves them their address space, 1 gives
+/// them a 36-bit one, 2 a 38-bit one with the 39-bit layout
 extern int eden_horizon_compact_address_space;
 /// Set by the frontend: how many blocks the JIT compiles ahead of the one it needs
 extern int eden_horizon_jit_blocks_ahead;

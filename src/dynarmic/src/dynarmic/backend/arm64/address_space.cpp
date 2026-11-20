@@ -172,10 +172,22 @@ AddressSpace::~AddressSpace() = default;
 #endif
 
 CodePtr AddressSpace::Get(IR::LocationDescriptor descriptor) {
+#ifdef __SWITCH__
+    LookupEntry& cached = lookup_cache[LookupIndex(descriptor.Value())];
+    if (cached.entry_point != nullptr && cached.descriptor == descriptor.Value()) {
+        return cached.entry_point;
+    }
+    if (const auto iter = block_entries.find(descriptor); iter != block_entries.end()) {
+        cached = {descriptor.Value(), iter->second};
+        return iter->second;
+    }
+    return nullptr;
+#else
     if (const auto iter = block_entries.find(descriptor); iter != block_entries.end()) {
         return iter->second;
     }
     return nullptr;
+#endif
 }
 
 std::optional<IR::LocationDescriptor> AddressSpace::ReverseGetLocation(CodePtr host_pc) {
@@ -329,6 +341,9 @@ void AddressSpace::InvalidateBasicBlocks(const ::Common::unordered_set<IR::Locat
         RelinkForDescriptor(descriptor, nullptr);
 
         block_entries.erase(iter);
+#ifdef __SWITCH__
+        lookup_cache[LookupIndex(descriptor.Value())] = {};
+#endif
     }
 
     ProtectCodeMemory();
@@ -338,6 +353,9 @@ void AddressSpace::ClearCache() {
 #ifdef __SWITCH__
     __atomic_fetch_sub(&eden_horizon_jit_blocks, block_infos.size(), __ATOMIC_RELAXED);
     __atomic_fetch_add(&eden_horizon_jit_cache_clears, 1, __ATOMIC_RELAXED);
+#endif
+#ifdef __SWITCH__
+    ClearLookupCache();
 #endif
     block_entries.clear();
     reverse_block_entries.clear();

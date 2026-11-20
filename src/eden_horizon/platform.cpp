@@ -347,12 +347,12 @@ void Draw(const std::string& folder, const std::vector<Entry>& entries, int sele
     } else {
         std::printf("\n");
     }
-    std::printf("Up/Down: move   Left/Right: page   A: open   B: back   X: options   +: exit");
+    std::printf("Up/Down: move  A: open  B: back  X: options  Y: this game's options  +: exit");
 }
 
-void DrawOptions(const std::vector<MenuOption>& options, int selected) {
+void DrawOptions(const std::vector<MenuOption>& options, int selected, const std::string& title) {
     std::printf("\x1b[2J\x1b[1;1H");
-    std::printf("\x1b[1mEden\x1b[0m - options\n\n\n");
+    std::printf("\x1b[1mEden\x1b[0m - %.60s\n\n\n", title.c_str());
     for (int row = 0; row < static_cast<int>(options.size()); ++row) {
         const MenuOption& option = options[static_cast<std::size_t>(row)];
         const char* const choice = option.choices[static_cast<std::size_t>(option.selected)].c_str();
@@ -363,13 +363,13 @@ void DrawOptions(const std::vector<MenuOption>& options, int selected) {
         }
     }
     if (selected < static_cast<int>(options.size())) {
-        std::printf("\x1b[20;1H%s", options[static_cast<std::size_t>(selected)].help.c_str());
+        std::printf("\x1b[22;1H%s", options[static_cast<std::size_t>(selected)].help.c_str());
     }
     std::printf("\x1b[44;1HUp/Down: move   Left/Right: change   B: back");
 }
 
 /// Runs the options screen until the user leaves it. Returns false if the applet must exit.
-bool EditOptions(std::vector<MenuOption>& options) {
+bool RunOptionsScreen(std::vector<MenuOption>& options, const std::string& title) {
     if (options.empty()) {
         return true;
     }
@@ -378,7 +378,7 @@ bool EditOptions(std::vector<MenuOption>& options) {
     while (appletMainLoop()) {
         padUpdate(&pad);
         const u64 pressed = padGetButtonsDown(&pad);
-        if (pressed & (HidNpadButton_B | HidNpadButton_X)) {
+        if (pressed & (HidNpadButton_B | HidNpadButton_X | HidNpadButton_Y)) {
             return true;
         }
         const int count = static_cast<int>(options.size());
@@ -398,7 +398,7 @@ bool EditOptions(std::vector<MenuOption>& options) {
             redraw = true;
         }
         if (redraw) {
-            DrawOptions(options, selected);
+            DrawOptions(options, selected, title);
             redraw = false;
         }
         consoleUpdate(nullptr);
@@ -408,7 +408,12 @@ bool EditOptions(std::vector<MenuOption>& options) {
 
 } // namespace
 
-std::string BrowseForGame(std::vector<MenuOption>& options) {
+bool EditOptions(std::vector<MenuOption>& options, const std::string& title) {
+    return RunOptionsScreen(options, title);
+}
+
+std::string BrowseForGame(std::vector<MenuOption>& options,
+                          const std::function<void(const std::string&)>& edit_game) {
     consoleInit(nullptr);
     InitializeInput();
 
@@ -428,9 +433,14 @@ std::string BrowseForGame(std::vector<MenuOption>& options) {
             break;
         }
         if (pressed & HidNpadButton_X) {
-            if (!EditOptions(options)) {
+            if (!RunOptionsScreen(options, "options for every game")) {
                 break;
             }
+            redraw = true;
+        }
+        if ((pressed & HidNpadButton_Y) && count > 0 &&
+            !entries[static_cast<std::size_t>(selected)].is_folder) {
+            edit_game(folder + entries[static_cast<std::size_t>(selected)].name);
             redraw = true;
         }
         if (pressed & (HidNpadButton_AnyUp | HidNpadButton_AnyDown | HidNpadButton_AnyLeft |

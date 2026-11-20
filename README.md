@@ -29,7 +29,8 @@ inestable, aunque ya mejoró bastante. No reportes fallos de este port al proyec
 | Luigi's Mansion 2 HD | Playable: correct picture, audio, controls, gyro, rumble, saves |
 | The Legend of Zelda: Echoes of Wisdom | Playable at 30 fps and above; stutters when entering new areas, rifts are only drawn from the raised camera, and loading a save sometimes hangs |
 | Super Mario 3D World + Bowser's Fury | Plays near 60 fps with occasional drops; only tested for a few minutes |
-| Mario Strikers: Battle League | Does not work: aborts at start with *Address space* `compact`, black screen after the loading icon with `game` |
+| Mario Strikers: Battle League | Unreliable: needs *Address space* `game` or `full`; some starts get past the intro and play at 60 fps, others stay on a black screen |
+| Kirby and the Forgotten Land | Starts and plays, but drops to 15-20 fps inside levels |
 
 Nothing else has been tested.
 
@@ -52,7 +53,9 @@ Known limits:
 
 1. Copy `eden.nro` to `sdmc:/switch/`.
 2. Put your own `prod.keys` and `title.keys` in `sdmc:/switch/eden/.local/share/eden/keys/`.
-3. Start it from the homebrew menu and choose a game file. **X** opens the options.
+3. Start it from the homebrew menu and choose a game file. **X** opens the options for
+   every game, and **Y** the options of the game under the cursor, which start out
+   inheriting the general ones.
 4. Hold **+** and **−** together to leave the game.
 
 The log is written to `sdmc:/switch/eden/.local/share/eden/log/eden_log.txt`.

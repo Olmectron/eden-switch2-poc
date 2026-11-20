@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -85,12 +86,19 @@ struct MenuOption {
     std::string help;                 ///< Shown while the option is selected
     std::vector<std::string> choices; ///< Values, as written to the settings file
     int selected;
+    bool per_game = false;            ///< Whether a game can have its own value
 };
+
+/// Shows `options` under `title` until the user leaves the screen, changing them in place.
+/// Returns false if the applet must exit.
+bool EditOptions(std::vector<MenuOption>& options, const std::string& title);
 
 /// Text-mode file picker over the SD card, shown before the emulator owns the screen.
 /// Lists folders and game files, starting in the folder last used.
 /// Returns the chosen file, or an empty string if the user cancelled.
 /// X opens a screen to change `options`; the caller reads the choices back afterwards.
-std::string BrowseForGame(std::vector<MenuOption>& options);
+/// Y on a game calls `edit_game` with its path, for the caller to show that game's settings.
+std::string BrowseForGame(std::vector<MenuOption>& options,
+                          const std::function<void(const std::string&)>& edit_game);
 
 } // namespace Platform
